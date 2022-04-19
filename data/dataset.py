@@ -13,7 +13,7 @@ from .const import CAMS, NUM_CLASSES, IMG_ORIGIN_H, IMG_ORIGIN_W
 from .vector_map import VectorizedLocalMap
 from .lidar import get_lidar_data
 from .image import normalize_img, img_transform
-from .utils import label_onehot_encoding
+from .utils import label_onehot_encoding, get_distance_transform
 from model.voxel import pad_or_trim_to_np
 
 
@@ -28,7 +28,7 @@ class HDMapNetDataset(Dataset):
         self.data_conf = data_conf
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
-        self.nusc = NuScenes(version=version, dataroot=dataroot, verbose=False)
+        self.nusc = NuScenes(version=version, dataroot=dataroot)
         self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size)
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
@@ -163,7 +163,7 @@ class HDMapNetSemanticDataset(HDMapNetDataset):
 
     def get_semantic_map(self, rec):
         vectors = self.get_vectors(rec)
-        instance_masks, forward_masks, backward_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
+        instance_masks, forward_masks, backward_masks, distance_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
         semantic_masks = instance_masks != 0
         semantic_masks = torch.cat([(~torch.any(semantic_masks, axis=0)).unsqueeze(0), semantic_masks])
         instance_masks = instance_masks.sum(0)
@@ -171,7 +171,9 @@ class HDMapNetSemanticDataset(HDMapNetDataset):
         backward_oh_masks = label_onehot_encoding(backward_masks, self.angle_class+1)
         direction_masks = forward_oh_masks + backward_oh_masks
         direction_masks = direction_masks / direction_masks.sum(0)
-        return semantic_masks, instance_masks, forward_masks, backward_masks, direction_masks
+        # obtain normalized DT [0.0, 1.0], truncated by 10
+        distance_masks = get_distance_transform(distance_masks, 10.0)
+        return semantic_masks, instance_masks, forward_masks, backward_masks, torch.tensor(distance_masks, dtype=torch.float32), direction_masks
 
     def __getitem__(self, idx):
         rec = self.samples[idx]

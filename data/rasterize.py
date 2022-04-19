@@ -103,6 +103,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
     instance_masks = []
     forward_masks = []
     backward_masks = []
+    distance_masks = []
     for i in range(num_classes):
         map_mask, idx = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, thickness, idx)
         instance_masks.append(map_mask)
@@ -112,17 +113,22 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
         forward_masks.append(forward_mask)
         backward_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, thickness, 1, type='backward', angle_class=angle_class)
         backward_masks.append(backward_mask)
+        distance_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1)
+        distance_masks.append(distance_mask)
 
     filter_masks = np.stack(filter_masks)
     instance_masks = np.stack(instance_masks)
     forward_masks = np.stack(forward_masks)
     backward_masks = np.stack(backward_masks)
+    distance_masks = np.stack(distance_masks)
 
     instance_masks = overlap_filter(instance_masks, filter_masks)
     forward_masks = overlap_filter(forward_masks, filter_masks).sum(0).astype('int32')
     backward_masks = overlap_filter(backward_masks, filter_masks).sum(0).astype('int32')
 
-    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks)
+    distance_masks = distance_masks != 0
+
+    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks), distance_masks
 
 
 def rasterize_map(vectors, patch_size, canvas_size, num_classes, thickness):

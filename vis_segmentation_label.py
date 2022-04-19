@@ -1,4 +1,5 @@
 import os
+from turtle import distance
 import tqdm
 import argparse
 from copy import deepcopy
@@ -6,6 +7,8 @@ from PIL import Image
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
+from data.const import NUM_CLASSES
 
 from data.dataset import HDMapNetSemanticDataset
 
@@ -36,6 +39,13 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
     color_map = np.random.randint(0, 256, (256, 3))
     color_map[0] = np.array([0, 0, 0])
 
+    semantic_color = np.array([
+        [0, 0, 0], # background
+        [0, 128, 0], # line
+        [255, 255, 0], # ped_crossing
+        [255, 0, 0] # contour
+        ])
+
     dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     gt_path = os.path.join(dataroot, 'samples', 'semanticGT')
 
@@ -44,7 +54,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
 
     for idx in tqdm.tqdm(range(dataset.__len__())):
         rec = dataset.nusc.sample[idx]
-        semantic_mask, instance_mask, forward_mask, backward_mask, _ = dataset.get_semantic_map(rec)
+        semantic_mask, instance_mask, forward_mask, backward_mask, distance_mask, _ = dataset.get_semantic_map(rec)
 
         lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
 
@@ -57,13 +67,31 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
         if not os.path.exists(base_path):
             os.mkdir(base_path)
 
-        semantic_mask = semantic_mask.astype('uint8') * 255
-        semantic_mask = np.moveaxis(semantic_mask, 0, -1)
-        Image.fromarray(semantic_mask).save(semantic_path)
+        semantic_mask = semantic_mask.numpy().astype('uint8') * 255
+        # 4, 200, 400: background, line, ped_crossing, contour
+        semantic_mask = np.argmax(semantic_mask, axis=0)
+        # 200, 400, value 0-3
+        semantic_color_mask = semantic_color[semantic_mask].astype('uint8')
+        # 200, 400, 3
+        # semantic_mask = np.moveaxis(semantic_mask, 0, -1)
+        Image.fromarray(semantic_color_mask).save(semantic_path)
 
-        instance_mask = instance_mask.sum(0).astype('uint8')
+        instance_mask = instance_mask.int().numpy()
         instance_color_mask = color_map[instance_mask].astype('uint8')
         Image.fromarray(instance_color_mask).save(instance_path)
+
+        distance_mask = distance_mask.numpy().astype('float32')
+        # 3, 200, 400
+        cmap = get_cmap('magma')        
+        for idx, mask in enumerate(distance_mask): # 200, 400
+            # 0: line, 1: ped_crossing, 2: contour
+            distance_color_mask = cmap(mask)[..., :3] * 255 # 200, 400, 3
+            distance_path = os.path.join(base_path, "DISTANCE{}.png".format(idx))
+            Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
+        distance_path = os.path.join(base_path, "DISTANCE.png")
+        distance_mask = np.clip(distance_mask.sum(0), 0.0, 1.0) # 200, 400
+        distance_color_mask = cmap(distance_mask)[..., :3] * 255 # 200, 400, 3
+        Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
 
         fig = plt.figure(figsize=(4, 2))
         ax = fig.add_axes([0, 0, 1, 1])
@@ -101,8 +129,8 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', type=str, default='dataset/nuScenes/')
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--thickness", type=int, default=5)

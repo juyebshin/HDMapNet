@@ -1,6 +1,7 @@
 import numpy as np
 
 import torch
+import cv2
 
 
 def get_proj_mat(intrins, rots, trans):
@@ -39,3 +40,16 @@ def gen_dx_bx(xbound, ybound, zbound):
     bx = torch.Tensor([row[0] + row[2] / 2.0 for row in [xbound, ybound, zbound]])
     nx = torch.LongTensor([(row[1] - row[0]) / row[2] for row in [xbound, ybound, zbound]])
     return dx, bx, nx
+
+def get_distance_transform(masks, threshold=None):
+    # masks: (3, 196, 200) np bool
+    labels = (~masks).astype('uint8')
+    distances = np.zeros(masks.shape, dtype=np.float32)
+    for i, label in enumerate(labels):
+        distances[i] = cv2.distanceTransform(label, cv2.DIST_L2, maskSize=5)
+        # truncate to [0.0, 10.0] and invert values
+        if threshold is not None:
+            distances[i] = float(threshold) - distances[i]
+            distances[i][distances[i] < 0.0] = 0.0
+        cv2.normalize(distances[i], distances[i], 0, 1.0, cv2.NORM_MINMAX)
+    return distances
