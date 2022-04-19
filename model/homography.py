@@ -53,18 +53,19 @@ def perspective(cam_coords, proj_mat, h, w, extrinsic, offset=None):
     Args:
         cam_coords:         [B, 4, npoints]
         proj_mat:           [B, 4, 4]
+        offset:             (40, 80)
 
     Returns:
         pix coords:         [B, h, w, 2]
     """
     eps = 1e-7
-    pix_coords = proj_mat @ cam_coords
+    pix_coords = proj_mat @ cam_coords # B, 4(x, y, z=0, 1), 20000
 
     N, _, _ = pix_coords.shape
 
     if extrinsic:
-        pix_coords[:, 0] += offset[0] / 2
-        pix_coords[:, 2] -= offset[1] / 8
+        pix_coords[:, 0] += offset[0] / 2 # + 40/1
+        pix_coords[:, 2] -= offset[1] / 8 # - 80/8
         pix_coords = torch.stack([pix_coords[:, 2], pix_coords[:, 0]], axis=1)
     else:
         pix_coords = pix_coords[:, :2, :] / (pix_coords[:, 2, :][:, None, :] + eps)
@@ -140,40 +141,54 @@ def bilinear_sampler(imgs, pix_coords):
 
 
 def plane_grid(xbound, ybound, zs, yaws, rolls, pitchs, cuda=True):
-    B = len(zs)
+    # xbound: [-60, 60, 0.6] ybound: [-30, 30, 0.6]
+    B = len(zs) # 1
 
-    xmin, xmax = xbound[0], xbound[1]
-    num_x = int((xbound[1] - xbound[0]) / xbound[2])
-    ymin, ymax = ybound[0], ybound[1]
-    num_y = int((ybound[1] - ybound[0]) / ybound[2])
+    xmin, xmax = xbound[0], xbound[1] # -60, 60
+    num_x = int((xbound[1] - xbound[0]) / xbound[2]) # 200
+    ymin, ymax = ybound[0], ybound[1] # -30, 30
+    num_y = int((ybound[1] - ybound[0]) / ybound[2]) # 100
 
     # y = torch.linspace(xmin, xmax, num_x, dtype=torch.double).cuda()
     # x = torch.linspace(ymin, ymax, num_y, dtype=torch.double).cuda()
-    y = torch.linspace(xmin, xmax, num_x)
-    x = torch.linspace(ymin, ymax, num_y)
+    y = torch.linspace(xmin, xmax, num_x) # [-60, 60]
+    x = torch.linspace(ymin, ymax, num_y) # [-30, 30]
     if cuda:
         x = x.cuda()
         y = y.cuda()
 
     y, x = torch.meshgrid(x, y)
+    # y, x = torch.meshgrid((x, y))
 
-    x = x.flatten()
-    y = y.flatten()
+    #      -60                  x                    60
+    #       _____________________________________________
+    # -30  |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #   y  |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #      |-------------------------------------------->|
+    #  30  |_____________________________________________|
+    x = x.flatten() # 20000
+    y = y.flatten() # 20000
 
-    x = x.unsqueeze(0).repeat(B, 1)
-    y = y.unsqueeze(0).repeat(B, 1)
+    x = x.unsqueeze(0).repeat(B, 1) # 1, 20000
+    y = y.unsqueeze(0).repeat(B, 1) # 1, 20000
 
     # z = torch.ones_like(x, dtype=torch.double).cuda() * zs.view(-1, 1)
     # d = torch.ones_like(x, dtype=torch.double).cuda()
-    z = torch.ones_like(x) * zs.view(-1, 1)
-    d = torch.ones_like(x)
+    z = torch.ones_like(x) * zs.view(-1, 1) # 1, 20000, all zeros
+    d = torch.ones_like(x) # 1, 20000, all ones
     if cuda:
         z = z.cuda()
         d = d.cuda()
 
-    coords = torch.stack([x, y, z, d], axis=1)
+    coords = torch.stack([x, y, z, d], axis=1) # 1, 4, 20000
 
     rotation_matrix = rotation_from_euler(pitchs, rolls, yaws, cuda)
+    # 1, 4, 4 rotation matrix, in IPM module, it is identity
 
     coords = rotation_matrix @ coords
     return coords
@@ -181,12 +196,13 @@ def plane_grid(xbound, ybound, zs, yaws, rolls, pitchs, cuda=True):
 
 def ipm_from_parameters(image, xyz, K, RT, target_h, target_w, extrinsic, post_RT=None):
     """
-    :param image: [B, H, W, C]
-    :param xyz: [B, 4, npoints]
+    :param image: [B, H, W, C] B, 40, 80, 64
+    :param xyz: [B, 4, npoints] B, 4, 100*200
     :param K: [B, 4, 4]
     :param RT: [B, 4, 4]
-    :param target_h: int
-    :param target_w: int
+    :param target_h: int 100
+    :param target_w: int 200
+    :param extrinsic: True(default)
     :return: warped_images: [B, target_h, target_w, C]
     """
     P = K @ RT
@@ -220,14 +236,15 @@ class PlaneEstimationModule(nn.Module):
 
 class IPM(nn.Module):
     def __init__(self, xbound, ybound, N, C, z_roll_pitch=False, visual=False, extrinsic=False, cuda=True):
+        # xbound: [-60, 60, 0.6] ybound: [-30, 30, 0.6]
         super(IPM, self).__init__()
         self.visual = visual
         self.z_roll_pitch = z_roll_pitch
         self.xbound = xbound
         self.ybound = ybound
         self.extrinsic = extrinsic
-        self.w = int((xbound[1] - xbound[0]) / xbound[2])
-        self.h = int((ybound[1] - ybound[0]) / ybound[2])
+        self.w = int((xbound[1] - xbound[0]) / xbound[2]) # 200
+        self.h = int((ybound[1] - ybound[0]) / ybound[2]) # 100
 
         if z_roll_pitch:
             self.plane_esti = PlaneEstimationModule(N, C)
@@ -236,14 +253,15 @@ class IPM(nn.Module):
             yaws = torch.tensor([0.]).cuda()
             rolls = torch.tensor([0.]).cuda()
             pitchs = torch.tensor([0.]).cuda()
+            # (4, 20000) plane grid, [x, y, 0, 1], (100 x 200 grid)
             self.planes = plane_grid(self.xbound, self.ybound, zs, yaws, rolls, pitchs)[0]
 
-        tri_mask = np.zeros((self.h, self.w))
-        vertices = np.array([[0, 0], [0, self.h], [self.w, self.h]], np.int32)
-        pts = vertices.reshape((-1, 1, 2))
-        cv2.fillPoly(tri_mask, [pts], color=1.)
-        self.tri_mask = torch.tensor(tri_mask[None, :, :, None])
-        self.flipped_tri_mask = torch.flip(self.tri_mask, [2]).bool()
+        tri_mask = np.zeros((self.h, self.w)) # (100, 200)
+        vertices = np.array([[0, 0], [0, self.h], [self.w, self.h]], np.int32) # 3, 2
+        pts = vertices.reshape((-1, 1, 2)) # 3, 1, 2
+        cv2.fillPoly(tri_mask, [pts], color=1.) # lower left triangle is filled with 1.
+        self.tri_mask = torch.tensor(tri_mask[None, :, :, None]) # 1, 100, 200, 1
+        self.flipped_tri_mask = torch.flip(self.tri_mask, [2]).bool() # lower right triangle
         if cuda:
             self.tri_mask = self.tri_mask.cuda()
             self.flipped_tri_mask = self.flipped_tri_mask.cuda()
@@ -259,7 +277,9 @@ class IPM(nn.Module):
         return warped_fv_images
 
     def forward(self, images, Ks, RTs, translation, yaw_roll_pitch, post_RTs=None):
+        # images: batch, 6, 64, 40, 80
         images = images.permute(0, 1, 3, 4, 2).contiguous()
+        # batch, 6, 40, 80, 64
         B, N, H, W, C = images.shape
 
         if self.z_roll_pitch:
@@ -275,6 +295,7 @@ class IPM(nn.Module):
         else:
             planes = self.planes
 
+        # batch*6, 40, 80, 64
         images = images.reshape(B*N, H, W, C)
         warped_fv_images = ipm_from_parameters(images, planes, Ks, RTs, self.h, self.w, self.extrinsic, post_RTs)
         warped_fv_images = warped_fv_images.reshape((B, N, self.h, self.w, C))

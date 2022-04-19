@@ -13,9 +13,9 @@ class ViewTransformation(nn.Module):
         super(ViewTransformation, self).__init__()
         self.n_views = n_views
         self.hw_mat = []
-        self.bv_size = bv_size
-        fv_dim = fv_size[0] * fv_size[1]
-        bv_dim = bv_size[0] * bv_size[1]
+        self.bv_size = bv_size # 40, 80
+        fv_dim = fv_size[0] * fv_size[1] # 8*22 = 176
+        bv_dim = bv_size[0] * bv_size[1] # 40*80 = 3200
         for i in range(self.n_views):
             fc_transform = nn.Sequential(
                 nn.Linear(fv_dim, bv_dim),
@@ -27,33 +27,41 @@ class ViewTransformation(nn.Module):
         self.hw_mat = nn.ModuleList(self.hw_mat)
 
     def forward(self, feat):
-        B, N, C, H, W = feat.shape
-        feat = feat.view(B, N, C, H*W)
+        B, N, C, H, W = feat.shape # batch, 6, 64, 8, 22
+        feat = feat.view(B, N, C, H*W) # batch, 6, 64, 176
         outputs = []
         for i in range(N):
+            # feat[:, i]: batch, 64, 176
             output = self.hw_mat[i](feat[:, i]).view(B, C, self.bv_size[0], self.bv_size[1])
+            # output: B, 64, 40, 80
             outputs.append(output)
         outputs = torch.stack(outputs, 1)
+        # outputs: B, N, 64, 40, 80
         return outputs
 
 
 class HDMapNet(nn.Module):
     def __init__(self, data_conf, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=36, lidar=False):
         super(HDMapNet, self).__init__()
-        self.camC = 64
+        self.camC = 64 # feature channel?
         self.downsample = 16
 
         dx, bx, nx = gen_dx_bx(data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
+        # nx = tensor([400, 200,   1])
+        # final_H: 200, final_W: 400
         final_H, final_W = nx[1].item(), nx[0].item()
 
+        # EfficientNet-B0
         self.camencode = CamEncode(self.camC)
         fv_size = (data_conf['image_size'][0]//self.downsample, data_conf['image_size'][1]//self.downsample)
+        # fv_size: (8, 22)
         bv_size = (final_H//5, final_W//5)
+        # bv_size: (40, 80)
         self.view_fusion = ViewTransformation(fv_size=fv_size, bv_size=bv_size)
 
-        res_x = bv_size[1] * 3 // 4
-        ipm_xbound = [-res_x, res_x, 4*res_x/final_W]
-        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H]
+        res_x = bv_size[1] * 3 // 4 # 80*3 // 4 = 60
+        ipm_xbound = [-res_x, res_x, 4*res_x/final_W] # [-60, 60, 0.6]
+        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H] # [-30, 30, 0.6]
         self.ipm = IPM(ipm_xbound, ipm_ybound, N=6, C=self.camC, extrinsic=True)
         self.up_sampler = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         # self.up_sampler = nn.Upsample(scale_factor=5, mode='bilinear', align_corners=True)
@@ -80,16 +88,19 @@ class HDMapNet(nn.Module):
         return Ks, RTs, post_RTs
 
     def get_cam_feats(self, x):
-        B, N, C, imH, imW = x.shape
+        B, N, C, imH, imW = x.shape # batch, 6(surround), channel, 128, 352
         x = x.view(B*N, C, imH, imW)
-        x = self.camencode(x)
+        x = self.camencode(x) # batch*6, 64, 128, 352
         x = x.view(B, N, self.camC, imH//self.downsample, imW//self.downsample)
+        # batch, 6, 64, 8, 22
         return x
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
-        x = self.get_cam_feats(img)
-        x = self.view_fusion(x)
+        x = self.get_cam_feats(img) # batch, 6, 64, 8, 22
+        x = self.view_fusion(x) # batch, 6, 64, 40, 80
         Ks, RTs, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
+        # Ks: batch, 6, eye(4, 4), RTs: batch, 6, RT(4, 4), post_RTs: None
+        # RTs: BEV plane to camera coordinate
         topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs)
         topdown = self.up_sampler(topdown)
         if self.lidar:

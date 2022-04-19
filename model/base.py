@@ -36,10 +36,12 @@ class CamEncode(nn.Module):
         self.up1 = Up(320+112, self.C)
 
     def get_eff_depth(self, x):
+        # x: B*N, C, H, W
         # adapted from https://github.com/lukemelas/EfficientNet-PyTorch/blob/master/efficientnet_pytorch/model.py#L231
         endpoints = dict()
 
         # Stem
+        # Conv -> BN -> Swish
         x = self.trunk._swish(self.trunk._bn0(self.trunk._conv_stem(x)))
         prev_x = x
 

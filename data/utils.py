@@ -36,8 +36,12 @@ def label_onehot_encoding(label, num_classes=4):
 
 
 def gen_dx_bx(xbound, ybound, zbound):
+    # xbound: [-30.0, 30.0, 0.15], ybound: [-15.0, 15.0, 0.15], zbound: [-10.0, 10.0, 20.0]
+    # dx = tensor([ 0.1500,  0.1500, 20.0000])
     dx = torch.Tensor([row[2] for row in [xbound, ybound, zbound]])
+    # bx = tensor([-29.9250, -14.9250,   0.0000])
     bx = torch.Tensor([row[0] + row[2] / 2.0 for row in [xbound, ybound, zbound]])
+    # nx = tensor([400, 200,   1])
     nx = torch.LongTensor([(row[1] - row[0]) / row[2] for row in [xbound, ybound, zbound]])
     return dx, bx, nx
 

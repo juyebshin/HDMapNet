@@ -39,12 +39,12 @@ def train(args):
     logger.addHandler(logging.StreamHandler(sys.stdout))
 
     data_conf = {
-        'num_channels': NUM_CLASSES + 1,
+        'num_channels': NUM_CLASSES + 1, # 4
         'image_size': args.image_size,
-        'xbound': args.xbound,
-        'ybound': args.ybound,
-        'zbound': args.zbound,
-        'dbound': args.dbound,
+        'xbound': args.xbound, # [-30.0, 30.0, 0.15]
+        'ybound': args.ybound, # [-15.0, 15.0, 0.15]
+        'zbound': args.zbound, # [-10.0, 10.0, 20.0]
+        'dbound': args.dbound, # [4.0, 45.0, 1.0]
         'thickness': args.thickness,
         'angle_class': args.angle_class,
     }

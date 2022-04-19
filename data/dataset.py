@@ -75,9 +75,9 @@ class HDMapNetDataset(Dataset):
         return torch.tensor(car_trans), torch.tensor(yaw_pitch_roll)
 
     def sample_augmentation(self):
-        fH, fW = self.data_conf['image_size']
-        resize = (fW / IMG_ORIGIN_W, fH / IMG_ORIGIN_H)
-        resize_dims = (fW, fH)
+        fH, fW = self.data_conf['image_size'] # 128, 352
+        resize = (fW / IMG_ORIGIN_W, fH / IMG_ORIGIN_H) # 0.22, 0.142
+        resize_dims = (fW, fH) # 128, 352
         return resize, resize_dims
 
     # def sample_augmentation(self):
