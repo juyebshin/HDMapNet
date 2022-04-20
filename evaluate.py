@@ -21,9 +21,9 @@ def eval_iou(model, val_loader):
     total_intersects = 0
     total_union = 0
     with torch.no_grad():
-        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt in tqdm.tqdm(val_loader):
+        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt in tqdm.tqdm(val_loader):
 
-            semantic, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 

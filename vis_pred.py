@@ -21,22 +21,26 @@ def onehot_encoding(logits, dim=1):
     return one_hot
 
 
-def vis_segmentation(model, val_loader):
+def vis_segmentation(model, val_loader, logdir, dist_threshold):
     model.eval()
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt) in enumerate(val_loader):
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt) in enumerate(val_loader):
 
-            semantic, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
-            semantic = semantic.softmax(1).cpu().numpy()
-            semantic[semantic_gt < 0.1] = np.nan
+            semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
+            distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
+            semantic[semantic < 0.1] = np.nan
 
-            for si in range(semantic.shape[0]):
+            semantic_gt = semantic_gt.cpu().numpy().astype('uint8')
+            distance_gt = distance_gt.cpu().numpy().astype('float32')
+
+            for si in range(semantic.shape[0]): # iterate over batch
                 plt.figure(figsize=(4, 2))
-                plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1, alpha=0.6)
-                plt.imshow(semantic[si][2], vmin=0, cmap='Reds', vmax=1, alpha=0.6)
-                plt.imshow(semantic[si][3], vmin=0, cmap='Greens', vmax=1, alpha=0.6)
+                plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1)
+                plt.imshow(semantic[si][2], vmin=0, cmap='Reds', vmax=1)
+                plt.imshow(semantic[si][3], vmin=0, cmap='Greens', vmax=1)
 
                 # fig.axes.get_xaxis().set_visible(False)
                 # fig.axes.get_yaxis().set_visible(False)
@@ -44,7 +48,61 @@ def vis_segmentation(model, val_loader):
                 plt.ylim(0, 200)
                 plt.axis('off')
 
-                imname = f'eval{batchi:06}_{si:03}.jpg'
+                impath = os.path.join(logdir, 'seg')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                print('saving', imname)
+                plt.savefig(imname)
+                plt.close()
+
+                plt.figure(figsize=(4, 2))
+                plt.imshow(semantic_gt[si][1], vmin=0, cmap='Blues', vmax=1)
+                plt.imshow(semantic_gt[si][2], vmin=0, cmap='Reds', vmax=1)
+                plt.imshow(semantic_gt[si][3], vmin=0, cmap='Greens', vmax=1)
+
+                # fig.axes.get_xaxis().set_visible(False)
+                # fig.axes.get_yaxis().set_visible(False)
+                plt.xlim(0, 400)
+                plt.ylim(0, 200)
+                plt.axis('off')
+
+                impath = os.path.join(logdir, 'seg_gt')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                print('saving', imname)
+                plt.savefig(imname)
+                plt.close()
+
+                plt.figure(figsize=(4, 2))
+                plt.imshow(distance[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.imshow(distance[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.imshow(distance[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.xlim(0, 400)
+                plt.ylim(0, 200)
+                plt.axis('off')
+
+                impath = os.path.join(logdir, 'dist')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
+                print('saving', imname)
+                plt.savefig(imname)
+                plt.close()
+
+                plt.figure(figsize=(4, 2))
+                plt.imshow(distance_gt[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.imshow(distance_gt[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.imshow(distance_gt[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
+                plt.xlim(0, 400)
+                plt.ylim(0, 200)
+                plt.axis('off')
+
+                impath = os.path.join(logdir, 'dist_gt')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
                 print('saving', imname)
                 plt.savefig(imname)
                 plt.close()
@@ -55,9 +113,9 @@ def vis_vector(model, val_loader, angle_class, logdir):
     car_img = Image.open('icon/car.png')
 
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, segmentation_gt, instance_gt, direction_gt) in enumerate(val_loader):
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, segmentation_gt, instance_gt, direction_gt, distance_gt) in enumerate(val_loader):
 
-            segmentation, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            segmentation, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                        post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                        lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -87,14 +145,15 @@ def main(args):
         'dbound': args.dbound,
         'thickness': args.thickness,
         'angle_class': args.angle_class,
+        'dist_threshold': args.dist_threshold, # 10.0
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
-    vis_vector(model, val_loader, args.angle_class, args.logdir)
-    # vis_segmentation(model, val_loader)
+    # vis_vector(model, val_loader, args.angle_class, args.logdir)
+    vis_segmentation(model, train_loader, args.logdir, args.dist_threshold)
 
 
 if __name__ == '__main__':
@@ -145,6 +204,11 @@ if __name__ == '__main__':
     parser.add_argument("--scale_var", type=float, default=1.0)
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
+    parser.add_argument("--scale_dt", type=float, default=1.0)
+
+    # distance transform config
+    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     args = parser.parse_args()
     main(args)

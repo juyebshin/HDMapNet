@@ -55,5 +55,5 @@ def get_distance_transform(masks, threshold=None):
         if threshold is not None:
             distances[i] = float(threshold) - distances[i]
             distances[i][distances[i] < 0.0] = 0.0
-        cv2.normalize(distances[i], distances[i], 0, 1.0, cv2.NORM_MINMAX)
+        # cv2.normalize(distances[i], distances[i], 0, 1.0, cv2.NORM_MINMAX)
     return distances

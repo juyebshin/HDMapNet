@@ -28,10 +28,20 @@ class SimpleLoss(torch.nn.Module):
         super(SimpleLoss, self).__init__()
         self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([pos_weight]))
 
-    def forward(self, ypred, ytgt):
+    def forward(self, ypred, ytgt): # b, 4, 200, 400
         loss = self.loss_fn(ypred, ytgt)
         return loss
 
+
+class MSEWithReluLoss(torch.nn.Module):
+    def __init__(self, dist_threshold=10.0):
+        super(MSEWithReluLoss, self).__init__()
+        self.loss_fn = torch.nn.L1Loss()
+        self.dist_threshold = dist_threshold
+    
+    def forward(self, ypred, ytgt): # b, 3, 200, 400
+        loss = self.loss_fn(torch.clamp(F.relu(ypred), max=self.dist_threshold), ytgt)
+        return loss
 
 class DiscriminativeLoss(nn.Module):
     def __init__(self, embed_dim, delta_v, delta_d):

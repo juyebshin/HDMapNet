@@ -65,7 +65,7 @@ class CamEncode(nn.Module):
 
 
 class BevEncode(nn.Module):
-    def __init__(self, inC, outC, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37):
+    def __init__(self, inC, outC, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True):
         super(BevEncode, self).__init__()
         trunk = resnet18(pretrained=False, zero_init_residual=True)
         self.conv1 = nn.Conv2d(inC, 64, kernel_size=7, stride=2, padding=3,
@@ -86,6 +86,17 @@ class BevEncode(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4 (num_classes)
         )
+
+        self.distance_reg = distance_reg
+        if distance_reg:
+            self.up_dt = nn.Sequential( # distance transform prediction
+                nn.Upsample(scale_factor=2, mode='bilinear',
+                            align_corners=True),
+                nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
+            )
 
         self.instance_seg = instance_seg
         if instance_seg:
@@ -121,6 +132,10 @@ class BevEncode(nn.Module):
         x2 = self.layer3(x) # b, 256, 25, 50
 
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
+        if self.distance_reg:
+            x_dt = self.up_dt(x) # b, 3, 200, 400
+        else:
+            x_dt = None
         x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
 
         if self.instance_seg:
@@ -135,4 +150,4 @@ class BevEncode(nn.Module):
         else:
             x_direction = None
 
-        return x, x_embedded, x_direction
+        return x, x_dt, x_embedded, x_direction

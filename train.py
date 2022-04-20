@@ -8,7 +8,7 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import SimpleLoss, DiscriminativeLoss
+from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -47,10 +47,11 @@ def train(args):
         'dbound': args.dbound, # [4.0, 45.0, 1.0]
         'thickness': args.thickness,
         'angle_class': args.angle_class,
+        'dist_threshold': args.dist_threshold, # 10.0
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
+    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg)
 
     if args.finetune:
         model.load_state_dict(torch.load(args.modelf), strict=False)
@@ -68,6 +69,7 @@ def train(args):
     loss_fn = SimpleLoss(args.pos_weight).cuda()
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
+    dt_loss_fn = MSEWithReluLoss().cuda()
 
     model.train()
     counter = 0
@@ -75,16 +77,17 @@ def train(args):
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
-                     yaw_pitch_roll, semantic_gt, instance_gt, direction_gt) in enumerate(train_loader):
+                     yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
 
-            semantic, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
             semantic_gt = semantic_gt.cuda().float()
             instance_gt = instance_gt.cuda()
+            distance_gt = distance_gt.cuda()
             seg_loss = loss_fn(semantic, semantic_gt)
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
@@ -102,8 +105,13 @@ def train(args):
             else:
                 direction_loss = 0
                 angle_diff = 0
+            
+            if args.distance_reg:
+                dt_loss = dt_loss_fn(distance, distance_gt)
+            else:
+                dt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction
+            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
@@ -127,6 +135,7 @@ def train(args):
                 writer.add_scalar('train/direction_loss', direction_loss, counter)
                 writer.add_scalar('train/final_loss', final_loss, counter)
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
+                writer.add_scalar('train/dt_loss', dt_loss, counter)
 
         iou = eval_iou(model, val_loader)
         logger.info(f"EVAL[{epoch:>2d}]:    "
@@ -198,6 +207,11 @@ if __name__ == '__main__':
     parser.add_argument("--scale_var", type=float, default=1.0)
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
+    parser.add_argument("--scale_dt", type=float, default=1.0)
+
+    # distance transform config
+    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     args = parser.parse_args()
     train(args)

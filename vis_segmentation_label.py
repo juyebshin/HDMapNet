@@ -27,13 +27,14 @@ def redundant_filter(mask, kernel=25):
     return mask
 
 
-def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
+def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_threshold):
     data_conf = {
         'image_size': (900, 1600),
         'xbound': xbound,
         'ybound': ybound,
         'thickness': thickness,
         'angle_class': angle_class,
+        'dist_threshold': dist_threshold,
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
@@ -54,7 +55,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
 
     for idx in tqdm.tqdm(range(dataset.__len__())):
         rec = dataset.nusc.sample[idx]
-        semantic_mask, instance_mask, forward_mask, backward_mask, distance_mask, _ = dataset.get_semantic_map(rec)
+        semantic_mask, instance_mask, forward_mask, backward_mask, _, distance_mask = dataset.get_semantic_map(rec)
 
         lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
 
@@ -82,6 +83,9 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class):
 
         distance_mask = distance_mask.numpy().astype('float32')
         # 3, 200, 400
+        vmin = np.min(distance_mask)
+        vmax = np.max(distance_mask)
+        distance_mask = (distance_mask - vmin) / (vmax - vmin)
         cmap = get_cmap('magma')        
         for idx, mask in enumerate(distance_mask): # 200, 400
             # 0: line, 1: ped_crossing, 2: contour
@@ -135,6 +139,7 @@ if __name__ == '__main__':
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--thickness", type=int, default=5)
     parser.add_argument("--angle_class", type=int, default=36)
+    parser.add_argument("--dist_threshold", type=float, default=10.0)
     args = parser.parse_args()
 
-    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class)
+    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold)
