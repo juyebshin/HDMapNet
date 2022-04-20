@@ -78,13 +78,13 @@ class BevEncode(nn.Module):
         self.layer3 = trunk.layer3
 
         self.up1 = Up(64 + 256, 256, scale_factor=4)
-        self.up2 = nn.Sequential(
+        self.up2 = nn.Sequential( # final semantic segmentation prediction
             nn.Upsample(scale_factor=2, mode='bilinear',
                         align_corners=True),
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, outC, kernel_size=1, padding=0),
+            nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4 (num_classes)
         )
 
         self.instance_seg = instance_seg
@@ -111,17 +111,17 @@ class BevEncode(nn.Module):
                 nn.Conv2d(128, direction_dim, kernel_size=1, padding=0),
             )
 
-    def forward(self, x):
-        x = self.conv1(x)
+    def forward(self, x): # x: b, 64, 200, 400
+        x = self.conv1(x) # b, 64, 100, 200
         x = self.bn1(x)
         x = self.relu(x)
 
-        x1 = self.layer1(x)
-        x = self.layer2(x1)
-        x2 = self.layer3(x)
+        x1 = self.layer1(x) # b, 64, 100, 200
+        x = self.layer2(x1) # b, 128, 50, 100
+        x2 = self.layer3(x) # b, 256, 25, 50
 
-        x = self.up1(x2, x1)
-        x = self.up2(x)
+        x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
+        x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
 
         if self.instance_seg:
             x_embedded = self.up1_embedded(x2, x1)

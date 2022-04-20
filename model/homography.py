@@ -59,18 +59,22 @@ def perspective(cam_coords, proj_mat, h, w, extrinsic, offset=None):
         pix coords:         [B, h, w, 2]
     """
     eps = 1e-7
-    pix_coords = proj_mat @ cam_coords # B, 4(x, y, z=0, 1), 20000
+    # proj_mat: batch*6, 4, 4
+    # cam_coords: 4, 20000
+    pix_coords = proj_mat @ cam_coords # batch*6, 4(x, y, z=0, 1), 20000
+    # pix_coords: b*6, 4, 20000
 
     N, _, _ = pix_coords.shape
 
     if extrinsic:
-        pix_coords[:, 0] += offset[0] / 2 # + 40/1
-        pix_coords[:, 2] -= offset[1] / 8 # - 80/8
+        pix_coords[:, 0] += offset[0] / 2 # + 40/2 x
+        pix_coords[:, 2] -= offset[1] / 8 # - 80/8 z
         pix_coords = torch.stack([pix_coords[:, 2], pix_coords[:, 0]], axis=1)
+        # batch*6, 2, 20000
     else:
         pix_coords = pix_coords[:, :2, :] / (pix_coords[:, 2, :][:, None, :] + eps)
-    pix_coords = pix_coords.view(N, 2, h, w)
-    pix_coords = pix_coords.permute(0, 2, 3, 1).contiguous()
+    pix_coords = pix_coords.view(N, 2, h, w) # b*6, 2, 100, 200
+    pix_coords = pix_coords.permute(0, 2, 3, 1).contiguous() # b*6, 100, 200, 2
     return pix_coords
 
 
@@ -83,11 +87,13 @@ def bilinear_sampler(imgs, pix_coords):
     :return:
         sampled image           [B, h, w, c]
     """
-    B, img_h, img_w, img_c = imgs.shape
-    B, pix_h, pix_w, pix_c = pix_coords.shape
-    out_shape = (B, pix_h, pix_w, img_c)
+    B, img_h, img_w, img_c = imgs.shape # b*6, 40, 80, 64
+    B, pix_h, pix_w, pix_c = pix_coords.shape # b*6, 100, 200, 2
+    out_shape = (B, pix_h, pix_w, img_c) # b*6, 100, 200, 64
 
     pix_x, pix_y = torch.split(pix_coords, 1, dim=-1)  # [B, pix_h, pix_w, 1]
+    # pix_x: [-60, 60] grid in camera coordinate
+    # pix_y: [-30, 30] grid in camera coordinate
 
     # Rounding
     pix_x0 = torch.floor(pix_x)
@@ -96,11 +102,11 @@ def bilinear_sampler(imgs, pix_coords):
     pix_y1 = pix_y0 + 1
 
     # Clip within image boundary
-    y_max = (img_h - 1)
-    x_max = (img_w - 1)
+    y_max = (img_h - 1) # 39
+    x_max = (img_w - 1) # 79
 
-    pix_x0 = torch.clip(pix_x0, 0, x_max)
-    pix_y0 = torch.clip(pix_y0, 0, y_max)
+    pix_x0 = torch.clip(pix_x0, 0, x_max) # [0, 79]
+    pix_y0 = torch.clip(pix_y0, 0, y_max) # [0, 39]
     pix_x1 = torch.clip(pix_x1, 0, x_max)
     pix_y1 = torch.clip(pix_y1, 0, y_max)
 
@@ -114,17 +120,17 @@ def bilinear_sampler(imgs, pix_coords):
     dim = img_w
 
     # Apply the lower and upper bound pix coord
-    base_y0 = pix_y0 * dim
-    base_y1 = pix_y1 * dim
+    base_y0 = pix_y0 * dim # [0, 39] * 80 -> [0, 3120]
+    base_y1 = pix_y1 * dim # [0, 39] * 80 -> [0, 3120]
 
-    # 4 corner vert ices
+    # 4 corner vert ices, idx{xy}
     idx00 = (pix_x0 + base_y0).view(B, -1, 1).repeat(1, 1, img_c).long()
     idx01 = (pix_x0 + base_y1).view(B, -1, 1).repeat(1, 1, img_c).long()
     idx10 = (pix_x1 + base_y0).view(B, -1, 1).repeat(1, 1, img_c).long()
     idx11 = (pix_x1 + base_y1).view(B, -1, 1).repeat(1, 1, img_c).long()
 
     # Gather pixels from image using vertices
-    imgs_flat = imgs.reshape([B, -1, img_c])
+    imgs_flat = imgs.reshape([B, -1, img_c]) # b*6, 3200, 64
 
     im00 = torch.gather(imgs_flat, 1, idx00).reshape(out_shape)
     im01 = torch.gather(imgs_flat, 1, idx01).reshape(out_shape)
@@ -151,8 +157,8 @@ def plane_grid(xbound, ybound, zs, yaws, rolls, pitchs, cuda=True):
 
     # y = torch.linspace(xmin, xmax, num_x, dtype=torch.double).cuda()
     # x = torch.linspace(ymin, ymax, num_y, dtype=torch.double).cuda()
-    y = torch.linspace(xmin, xmax, num_x) # [-60, 60]
-    x = torch.linspace(ymin, ymax, num_y) # [-30, 30]
+    y = torch.linspace(xmin, xmax, num_x) # [-60, 60] 200
+    x = torch.linspace(ymin, ymax, num_y) # [-30, 30] 100
     if cuda:
         x = x.cuda()
         y = y.cuda()
@@ -196,22 +202,23 @@ def plane_grid(xbound, ybound, zs, yaws, rolls, pitchs, cuda=True):
 
 def ipm_from_parameters(image, xyz, K, RT, target_h, target_w, extrinsic, post_RT=None):
     """
-    :param image: [B, H, W, C] B, 40, 80, 64
-    :param xyz: [B, 4, npoints] B, 4, 100*200
-    :param K: [B, 4, 4]
-    :param RT: [B, 4, 4]
+    :param image: [B, H, W, C] batch*6, 40, 80, 64
+    :param xyz: [B, 4, npoints] 4, 100*200
+    :param K: [B, 4, 4] batch, 6, 4, 4
+    :param RT: [B, 4, 4] batch, 6, 4, 4
     :param target_h: int 100
     :param target_w: int 200
     :param extrinsic: True(default)
     :return: warped_images: [B, target_h, target_w, C]
     """
-    P = K @ RT
+    P = K @ RT # K: identity, RT: ego to camera coordinate
     if post_RT is not None:
         P = post_RT @ P
-    P = P.reshape(-1, 4, 4)
+    P = P.reshape(-1, 4, 4) # batch*6, 4, 4
     pixel_coords = perspective(xyz, P, target_h, target_w, extrinsic, image.shape[1:3])
+    # pixel_coords: b*6, 100, 200, 2 -> BEV grid in camera coordinate
     image2 = bilinear_sampler(image, pixel_coords)
-    image2 = image2.type_as(image)
+    image2 = image2.type_as(image) # b*6, 100, 200, 64
     return image2
 
 
@@ -297,8 +304,8 @@ class IPM(nn.Module):
 
         # batch*6, 40, 80, 64
         images = images.reshape(B*N, H, W, C)
-        warped_fv_images = ipm_from_parameters(images, planes, Ks, RTs, self.h, self.w, self.extrinsic, post_RTs)
-        warped_fv_images = warped_fv_images.reshape((B, N, self.h, self.w, C))
+        warped_fv_images = ipm_from_parameters(images, planes, Ks, RTs, self.h, self.w, self.extrinsic, post_RTs) # b*6, 100, 200, 64
+        warped_fv_images = warped_fv_images.reshape((B, N, self.h, self.w, C)) # b, 6, 100, 200, 64
         if self.visual:
             warped_fv_images = self.mask_warped(warped_fv_images)
 
@@ -311,7 +318,7 @@ class IPM(nn.Module):
             return warped_topdown.permute(0, 3, 1, 2).contiguous()
         else:
             warped_topdown, _ = warped_fv_images.max(1)
-            warped_topdown = warped_topdown.permute(0, 3, 1, 2).contiguous()
+            warped_topdown = warped_topdown.permute(0, 3, 1, 2).contiguous() # b, 64, 100, 200
             warped_topdown = warped_topdown.view(B, C, self.h, self.w)
             return warped_topdown
 

@@ -100,9 +100,9 @@ class HDMapNet(nn.Module):
         x = self.view_fusion(x) # batch, 6, 64, 40, 80
         Ks, RTs, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
         # Ks: batch, 6, eye(4, 4), RTs: batch, 6, RT(4, 4), post_RTs: None
-        # RTs: BEV plane to camera coordinate
-        topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs)
-        topdown = self.up_sampler(topdown)
+        # RTs: ego to camera coordinate
+        topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs) # b, 64, 100, 200
+        topdown = self.up_sampler(topdown) # b, 64, 200, 400
         if self.lidar:
             lidar_feature = self.pp(lidar_data, lidar_mask)
             topdown = torch.cat([topdown, lidar_feature], dim=1)
