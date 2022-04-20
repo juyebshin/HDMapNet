@@ -1,3 +1,4 @@
+import os
 import argparse
 import numpy as np
 from PIL import Image
@@ -49,7 +50,7 @@ def vis_segmentation(model, val_loader):
                 plt.close()
 
 
-def vis_vector(model, val_loader, angle_class):
+def vis_vector(model, val_loader, angle_class, logdir):
     model.eval()
     car_img = Image.open('icon/car.png')
 
@@ -70,7 +71,7 @@ def vis_vector(model, val_loader, angle_class):
                 plt.ylim((0, segmentation.shape[2]))
                 plt.imshow(car_img, extent=[segmentation.shape[3]//2-15, segmentation.shape[3]//2+15, segmentation.shape[2]//2-12, segmentation.shape[2]//2+12])
 
-                img_name = f'eval{batchi:06}_{si:03}.jpg'
+                img_name = os.path.join(logdir, f'eval{batchi:06}_{si:03}.jpg')
                 print('saving', img_name)
                 plt.savefig(img_name)
                 plt.close()
@@ -92,7 +93,7 @@ def main(args):
     model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
-    vis_vector(model, val_loader, args.angle_class)
+    vis_vector(model, val_loader, args.angle_class, args.logdir)
     # vis_segmentation(model, val_loader)
 
 
