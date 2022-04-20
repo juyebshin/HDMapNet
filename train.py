@@ -153,7 +153,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/debug')
+    parser.add_argument("--logdir", type=str, default='./runs/default')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/juyeb/catkin_ws/dataset/nuscenes/')
@@ -166,7 +166,7 @@ if __name__ == '__main__':
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)
-    parser.add_argument("--bsz", type=int, default=2) # batch-size
+    parser.add_argument("--bsz", type=int, default=4) # batch-size
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
