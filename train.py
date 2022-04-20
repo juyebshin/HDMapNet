@@ -71,6 +71,7 @@ def train(args):
 
     model.train()
     counter = 0
+    best_iou = 0.0
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
@@ -131,10 +132,19 @@ def train(args):
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     f"IOU: {np.array2string(iou[1:].numpy(), precision=3, floatmode='fixed')}")
 
-        write_log(writer, iou, 'eval', counter)
+        write_log(writer, iou, 'eval', epoch)
         model_name = os.path.join(args.logdir, f"model{epoch}.pt")
         torch.save(model.state_dict(), model_name)
         logger.info(f"{model_name} saved")
+        mean_iou = float(torch.mean(iou[1:]))
+
+        # save best checkpoint
+        if mean_iou > best_iou:
+            mean_iou = best_iou
+            model_name = os.path.join(args.logdir, "model_best.pt")
+            torch.save(model.state_dict(), model_name)
+            logger.info(f"{model_name} saved")
+        
         model.train()
 
         sched.step()
@@ -156,7 +166,7 @@ if __name__ == '__main__':
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)
-    parser.add_argument("--bsz", type=int, default=4)
+    parser.add_argument("--bsz", type=int, default=4) # batch-size
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
