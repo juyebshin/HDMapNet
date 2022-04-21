@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 
 import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
 
 import tqdm
 import torch
@@ -22,6 +23,13 @@ def onehot_encoding(logits, dim=1):
 
 
 def vis_segmentation(model, val_loader, logdir, dist_threshold):
+    semantic_color = np.array([
+        [0, 0, 0], # background
+        [0, 128, 0], # line
+        [255, 255, 0], # ped_crossing
+        [255, 0, 0] # contour
+        ])
+    dist_cmap = get_cmap('magma')
     model.eval()
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt) in enumerate(val_loader):
@@ -31,81 +39,132 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
-            semantic[semantic < 0.1] = np.nan
+            # semantic[semantic < 0.1] = np.nan
+            semantic[semantic < 0.1] = 0.0
 
             semantic_gt = semantic_gt.cpu().numpy().astype('uint8')
             distance_gt = distance_gt.cpu().numpy().astype('float32')
 
+            vmin = np.min(distance)
+            vmax = np.max(distance)
+            distance = (distance - vmin) / (vmax - vmin)
+
+            vmin = np.min(distance_gt)
+            vmax = np.max(distance_gt)
+            distance_gt = (distance_gt - vmin) / (vmax - vmin)
+
             for si in range(semantic.shape[0]): # iterate over batch
-                plt.figure(figsize=(4, 2))
-                plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1)
-                plt.imshow(semantic[si][2], vmin=0, cmap='Reds', vmax=1)
-                plt.imshow(semantic[si][3], vmin=0, cmap='Greens', vmax=1)
-
-                # fig.axes.get_xaxis().set_visible(False)
-                # fig.axes.get_yaxis().set_visible(False)
-                plt.xlim(0, 400)
-                plt.ylim(0, 200)
-                plt.axis('off')
-
+                # semantic: b, 4, 200, 400
+                semantic_pred_onehot = np.argmax(semantic[si], axis=0)
+                semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
                 impath = os.path.join(logdir, 'seg')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
                 print('saving', imname)
-                plt.savefig(imname)
-                plt.close()
+                Image.fromarray(semantic_pred_color).save(imname)
 
-                plt.figure(figsize=(4, 2))
-                plt.imshow(semantic_gt[si][1], vmin=0, cmap='Blues', vmax=1)
-                plt.imshow(semantic_gt[si][2], vmin=0, cmap='Reds', vmax=1)
-                plt.imshow(semantic_gt[si][3], vmin=0, cmap='Greens', vmax=1)
-
-                # fig.axes.get_xaxis().set_visible(False)
-                # fig.axes.get_yaxis().set_visible(False)
-                plt.xlim(0, 400)
-                plt.ylim(0, 200)
-                plt.axis('off')
-
+                # semantic_gt: b, 4, 200, 400 value=[0, 1]
+                semantic_gt_onehot = np.argmax(semantic_gt[si], axis=0)
+                semantic_gt_color = semantic_color[semantic_gt_onehot].astype('uint8') # 200, 400, 3
                 impath = os.path.join(logdir, 'seg_gt')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
                 print('saving', imname)
-                plt.savefig(imname)
-                plt.close()
+                Image.fromarray(semantic_gt_color).save(imname)
 
-                plt.figure(figsize=(4, 2))
-                plt.imshow(distance[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.imshow(distance[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.imshow(distance[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.xlim(0, 400)
-                plt.ylim(0, 200)
-                plt.axis('off')
-
+                # distance: b, 3, 200, 400
+                distance_pred = np.max(distance[si], axis=0) # 200, 400
+                distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
                 impath = os.path.join(logdir, 'dist')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
+                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
                 print('saving', imname)
-                plt.savefig(imname)
-                plt.close()
+                Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
-                plt.figure(figsize=(4, 2))
-                plt.imshow(distance_gt[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.imshow(distance_gt[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.imshow(distance_gt[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
-                plt.xlim(0, 400)
-                plt.ylim(0, 200)
-                plt.axis('off')
-
+                # distance_gt: b, 3, 200, 400
+                distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
+                distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
                 impath = os.path.join(logdir, 'dist_gt')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
+                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
                 print('saving', imname)
-                plt.savefig(imname)
-                plt.close()
+                Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
+
+
+
+                # plt.figure(figsize=(4, 2))
+                # plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1)
+                # plt.imshow(semantic[si][2], vmin=0, cmap='Reds', vmax=1)
+                # plt.imshow(semantic[si][3], vmin=0, cmap='Greens', vmax=1)
+
+                # # fig.axes.get_xaxis().set_visible(False)
+                # # fig.axes.get_yaxis().set_visible(False)
+                # plt.xlim(0, 400)
+                # plt.ylim(0, 200)
+                # plt.axis('off')
+
+                # impath = os.path.join(logdir, 'seg')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                # print('saving', imname)
+                # plt.savefig(imname)
+                # plt.close()
+
+                # plt.figure(figsize=(4, 2))
+                # plt.imshow(semantic_gt[si][1], vmin=0, cmap='Blues', vmax=1)
+                # plt.imshow(semantic_gt[si][2], vmin=0, cmap='Reds', vmax=1)
+                # plt.imshow(semantic_gt[si][3], vmin=0, cmap='Greens', vmax=1)
+
+                # # fig.axes.get_xaxis().set_visible(False)
+                # # fig.axes.get_yaxis().set_visible(False)
+                # plt.xlim(0, 400)
+                # plt.ylim(0, 200)
+                # plt.axis('off')
+
+                # impath = os.path.join(logdir, 'seg_gt')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'train_seg{batchi:06}_{si:03}.jpg')
+                # print('saving', imname)
+                # plt.savefig(imname)
+                # plt.close()
+
+                # plt.figure(figsize=(4, 2))
+                # plt.imshow(distance[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.imshow(distance[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.imshow(distance[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.xlim(0, 400)
+                # plt.ylim(0, 200)
+                # plt.axis('off')
+
+                # impath = os.path.join(logdir, 'dist')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
+                # print('saving', imname)
+                # plt.savefig(imname)
+                # plt.close()
+
+                # plt.figure(figsize=(4, 2))
+                # plt.imshow(distance_gt[si][0], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.imshow(distance_gt[si][1], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.imshow(distance_gt[si][2], vmin=0, cmap='magma', vmax=dist_threshold)
+                # plt.xlim(0, 400)
+                # plt.ylim(0, 200)
+                # plt.axis('off')
+
+                # impath = os.path.join(logdir, 'dist_gt')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'train_dist{batchi:06}_{si:03}.jpg')
+                # print('saving', imname)
+                # plt.savefig(imname)
+                # plt.close()
 
 
 def vis_vector(model, val_loader, angle_class, logdir):
@@ -129,7 +188,10 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 plt.ylim((0, segmentation.shape[2]))
                 plt.imshow(car_img, extent=[segmentation.shape[3]//2-15, segmentation.shape[3]//2+15, segmentation.shape[2]//2-12, segmentation.shape[2]//2+12])
 
-                img_name = os.path.join(logdir, f'eval{batchi:06}_{si:03}.jpg')
+                img_path = os.path.join(logdir, 'vector')
+                if not os.path.exists(img_path):
+                    os.mkdir(img_path)
+                img_name = os.path.join(img_path, f'train{batchi:06}_{si:03}.jpg')
                 print('saving', img_name)
                 plt.savefig(img_name)
                 plt.close()

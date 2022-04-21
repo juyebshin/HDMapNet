@@ -86,14 +86,15 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         vmin = np.min(distance_mask)
         vmax = np.max(distance_mask)
         distance_mask = (distance_mask - vmin) / (vmax - vmin)
-        cmap = get_cmap('magma')        
+        cmap = get_cmap('magma')
         for idx, mask in enumerate(distance_mask): # 200, 400
             # 0: line, 1: ped_crossing, 2: contour
             distance_color_mask = cmap(mask)[..., :3] * 255 # 200, 400, 3
             distance_path = os.path.join(base_path, "DISTANCE{}.png".format(idx))
             Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
         distance_path = os.path.join(base_path, "DISTANCE.png")
-        distance_mask = np.clip(distance_mask.sum(0), 0.0, 1.0) # 200, 400
+        # distance_mask = np.clip(distance_mask.sum(0), 0.0, 1.0) # 200, 400
+        distance_mask = np.max(distance_mask, axis=0) # 200, 400
         distance_color_mask = cmap(distance_mask)[..., :3] * 255 # 200, 400, 3
         Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
 
