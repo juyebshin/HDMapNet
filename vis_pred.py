@@ -60,7 +60,7 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                 impath = os.path.join(logdir, 'seg')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 print('saving', imname)
                 Image.fromarray(semantic_pred_color).save(imname)
 
@@ -70,7 +70,7 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                 impath = os.path.join(logdir, 'seg_gt')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 print('saving', imname)
                 Image.fromarray(semantic_gt_color).save(imname)
 
@@ -80,7 +80,7 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                 impath = os.path.join(logdir, 'dist')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 print('saving', imname)
                 Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
@@ -90,7 +90,7 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                 impath = os.path.join(logdir, 'dist_gt')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'train{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 print('saving', imname)
                 Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
@@ -215,7 +215,7 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    vis_segmentation(model, train_loader, args.logdir, args.dist_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.dist_threshold)
 
 
 if __name__ == '__main__':

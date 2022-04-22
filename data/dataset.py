@@ -51,11 +51,31 @@ class HDMapNetDataset(Dataset):
         # remove samples that aren't in this split
         samples = [samp for samp in samples if
                    self.nusc.get('scene', samp['scene_token'])['name'] in self.scenes]
+        
+        # # keyframe blob only
+        # samples = []
+        # for scene in self.nusc.scene:
+
+        #     # Ignore scenes which don't belong to the current split
+        #     if scene['name'] not in self.scenes:
+        #         continue
+
+        #     # iterate over samples
+        #     for sample in self.iterate_samples(scene['first_sample_token']):
+
+        #         samples.append(sample)
 
         # sort by scene, timestamp (only to make chronological viz easier)
         samples.sort(key=lambda x: (x['scene_token'], x['timestamp']))
 
         return samples
+
+    def iterate_samples(self, start_token):
+        sample_token = start_token
+        while sample_token != '':
+            sample = self.nusc.get('sample', sample_token)
+            yield sample
+            sample_token = sample['next']
 
     def get_lidar(self, rec):
         lidar_data = get_lidar_data(self.nusc, rec, nsweeps=3, min_distance=2.2)

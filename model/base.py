@@ -89,6 +89,7 @@ class BevEncode(nn.Module):
 
         self.distance_reg = distance_reg
         if distance_reg:
+            self.pool = nn.AvgPool2d(kernel_size=2)
             self.up_dt = nn.Sequential( # distance transform prediction
                 nn.Upsample(scale_factor=2, mode='bilinear',
                             align_corners=True),
@@ -96,6 +97,14 @@ class BevEncode(nn.Module):
                 nn.BatchNorm2d(128),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
+            )
+            self.dense = nn.Sequential(
+                nn.Upsample(scale_factor=2, mode='bilinear',
+                            align_corners=True),
+                nn.Conv2d(256 + outC-1, 128, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4
             )
 
         self.instance_seg = instance_seg
@@ -134,10 +143,12 @@ class BevEncode(nn.Module):
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
         if self.distance_reg:
             x_dt = self.up_dt(x) # b, 3, 200, 400
+            x = self.dense(torch.cat([x, self.pool(self.relu(x_dt))], dim=1)) # b, 259, 200, 400
         else:
             x_dt = None
-        x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
-
+            x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
+        # x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
+        
         if self.instance_seg:
             x_embedded = self.up1_embedded(x2, x1)
             x_embedded = self.up2_embedded(x_embedded)
