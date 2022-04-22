@@ -142,9 +142,10 @@ def train(args):
                     f"IOU: {np.array2string(iou[1:].numpy(), precision=3, floatmode='fixed')}")
 
         write_log(writer, iou, 'eval', epoch)
-        model_name = os.path.join(args.logdir, f"model{epoch}.pt")
-        torch.save(model.state_dict(), model_name)
-        logger.info(f"{model_name} saved")
+        # do not save this to save memory
+        # model_name = os.path.join(args.logdir, f"model{epoch}.pt")
+        # torch.save(model.state_dict(), model_name)
+        # logger.info(f"{model_name} saved")
         mean_iou = float(torch.mean(iou[1:]))
 
         # save best checkpoint
@@ -166,7 +167,7 @@ if __name__ == '__main__':
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/juyeb/catkin_ws/dataset/nuscenes/')
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
