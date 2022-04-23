@@ -317,7 +317,7 @@ class IPM(nn.Module):
             warped_topdown[warped_mask] = warped_fv_images[:, CAM_BL][warped_mask] + warped_fv_images[:, CAM_BR][warped_mask]
             return warped_topdown.permute(0, 3, 1, 2).contiguous()
         else:
-            warped_topdown, _ = warped_fv_images.max(1)
+            warped_topdown, _ = warped_fv_images.max(1) # maximum for overlapping over cameras
             warped_topdown = warped_topdown.permute(0, 3, 1, 2).contiguous() # b, 64, 100, 200
             warped_topdown = warped_topdown.view(B, C, self.h, self.w)
             return warped_topdown # b, 64, 100, 200
