@@ -40,10 +40,15 @@ def vis_label(dataroot, version, xbound, ybound):
         if not os.path.exists(base_path):
             os.mkdir(base_path)
 
+        major_xticks = np.linspace(-30, 30, 51)
+        major_yticks = np.linspace(-15, 15, 26)
         plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
-        plt.axis('off')
+        # plt.axis('off')
+        plt.xticks(major_xticks)
+        plt.yticks(major_yticks)
+        plt.grid()
         for vector in vectors:
             pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
             pts = pts[:pts_num]
@@ -86,7 +91,7 @@ def vis_label(dataroot, version, xbound, ybound):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
