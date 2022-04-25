@@ -150,7 +150,7 @@ def train(args):
 
         # save best checkpoint
         if mean_iou > best_iou:
-            mean_iou = best_iou
+            best_iou = mean_iou
             model_name = os.path.join(args.logdir, "model_best.pt")
             torch.save(model.state_dict(), model_name)
             logger.info(f"{model_name} saved")
