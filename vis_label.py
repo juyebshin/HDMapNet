@@ -86,7 +86,7 @@ def vis_label(dataroot, version, xbound, ybound):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', type=str, default='dataset/nuScenes/')
+    parser.add_argument('dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
