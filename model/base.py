@@ -26,6 +26,27 @@ class Up(nn.Module):
         x1 = torch.cat([x2, x1], dim=1)
         return self.conv(x1)
 
+class UpDT(nn.Module):
+    def __init__(self, in_channels, out_channels, scale_factor=2):
+        super().__init__()
+
+        self.up = nn.Upsample(scale_factor=scale_factor, mode='bilinear',
+                              align_corners=True)
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, out_channels, kernel_size=1, padding=0)
+        )
+
+    def forward(self, x1, x2):
+        # x1: feature
+        # x2: distance transform
+        x1 = self.up(x1)
+        x1 = torch.cat([x1, x2], dim=1)
+        return self.conv(x1) # b, 3, 200, 400
+
 
 class CamEncode(nn.Module):
     def __init__(self, C):
@@ -89,8 +110,8 @@ class BevEncode(nn.Module):
 
         self.distance_reg = distance_reg
         if distance_reg:
-            self.pool = nn.AvgPool2d(kernel_size=2)
-            self.up_dt = nn.Sequential( # distance transform prediction
+            self.up1_dt = Up(64 + 256, 256, scale_factor=4)
+            self.up2_dt = nn.Sequential( # distance transform prediction
                 nn.Upsample(scale_factor=2, mode='bilinear',
                             align_corners=True),
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
@@ -98,14 +119,7 @@ class BevEncode(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
             )
-            self.dense = nn.Sequential(
-                nn.Upsample(scale_factor=2, mode='bilinear',
-                            align_corners=True),
-                nn.Conv2d(256 + outC-1, 128, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(128),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4
-            )
+            self.up3 = UpDT(256 + outC-1, outC, scale_factor=2)
 
         self.instance_seg = instance_seg
         if instance_seg:
@@ -142,8 +156,11 @@ class BevEncode(nn.Module):
 
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
         if self.distance_reg:
-            x_dt = self.up_dt(x) # b, 3, 200, 400
-            x = self.dense(torch.cat([x, self.pool(self.relu(x_dt))], dim=1)) # b, 259, 200, 400
+            x_dt = self.up1_dt(x2, x1) # b, 256, 100, 200
+            x_dt = self.up2_dt(x_dt) # b, 3, 200, 400
+            # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
+            # concat [x, x_dt] and upsample to get dense semantic prediction
+            x = self.up3(x, self.relu(x_dt)) # b, 4, 200, 400
         else:
             x_dt = None
             x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
