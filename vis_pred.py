@@ -1,3 +1,4 @@
+import enum
 import os
 import argparse
 import numpy as np
@@ -22,7 +23,7 @@ def onehot_encoding(logits, dim=1):
     return one_hot
 
 
-def vis_segmentation(model, val_loader, logdir, dist_threshold):
+def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_threshold=None):
     semantic_color = np.array([
         [0, 0, 0], # background
         [0, 128, 0], # line
@@ -75,24 +76,31 @@ def vis_segmentation(model, val_loader, logdir, dist_threshold):
                 Image.fromarray(semantic_gt_color).save(imname)
 
                 # distance: b, 3, 200, 400
-                distance_pred = np.max(distance[si], axis=0) # 200, 400
-                distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
-                impath = os.path.join(logdir, 'dist')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                print('saving', imname)
-                Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
+                if distance_reg:
+                    distance_pred = np.max(distance[si], axis=0) # 200, 400
+                    distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'dist')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
-                # distance_gt: b, 3, 200, 400
-                distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
-                distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
-                impath = os.path.join(logdir, 'dist_gt')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                print('saving', imname)
-                Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
+                    for idx, distance_single in enumerate(distance[si]): # for each class 0, 1, 2
+                        distance_pred_color = dist_cmap(distance_single)[..., :3] * 255 # 200, 400, 3
+                        imname = os.path.join(impath, f'eval{batchi:06}_{si:03}_{idx:01}.png')
+                        print('saving', imname)
+                        Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
+
+                    # distance_gt: b, 3, 200, 400
+                    distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
+                    distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'dist_gt')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
 
 
@@ -191,7 +199,7 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 img_path = os.path.join(logdir, 'vector')
                 if not os.path.exists(img_path):
                     os.mkdir(img_path)
-                img_name = os.path.join(img_path, f'train{batchi:06}_{si:03}.jpg')
+                img_name = os.path.join(img_path, f'eval{batchi:06}_{si:03}.jpg')
                 print('saving', img_name)
                 plt.savefig(img_name)
                 plt.close()
@@ -215,7 +223,9 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    vis_segmentation(model, val_loader, args.logdir, args.dist_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold)
+    if args.instance_seg and args.direction_pred:
+        vis_vector(model, val_loader, args.angle_class, args.logdir)
 
 
 if __name__ == '__main__':
@@ -225,7 +235,7 @@ if __name__ == '__main__':
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
