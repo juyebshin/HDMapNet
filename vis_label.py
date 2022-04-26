@@ -46,15 +46,16 @@ def vis_label(dataroot, version, xbound, ybound):
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
         # plt.axis('off')
-        plt.xticks(major_xticks)
-        plt.yticks(major_yticks)
-        plt.grid()
+        plt.xticks(major_xticks, fontsize=2)
+        plt.yticks(major_yticks, fontsize=2)
+        plt.grid(True)
         for vector in vectors:
             pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
             pts = pts[:pts_num]
             x = np.array([pt[0] for pt in pts])
             y = np.array([pt[1] for pt in pts])
-            plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+            # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+            plt.scatter(x, y, s=0.1, c=colors_plt[line_type])
 
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 

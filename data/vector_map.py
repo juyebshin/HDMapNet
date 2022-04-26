@@ -14,7 +14,7 @@ class VectorizedLocalMap(object):
                  line_classes=['road_divider', 'lane_divider'],
                  ped_crossing_classes=['ped_crossing'],
                  contour_classes=['road_segment', 'lane'],
-                 sample_dist=1.2, # sample vector points every <sample_dist> meter
+                 sample_dist=1.5, # sample vector points every <sample_dist> meter
                  num_samples=250,
                  padding=False,
                  normalize=False,
