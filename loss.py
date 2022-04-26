@@ -36,7 +36,7 @@ class SimpleLoss(torch.nn.Module):
 class MSEWithReluLoss(torch.nn.Module):
     def __init__(self, dist_threshold=10.0):
         super(MSEWithReluLoss, self).__init__()
-        self.loss_fn = torch.nn.L1Loss()
+        self.loss_fn = torch.nn.MSELoss()
         self.dist_threshold = dist_threshold
     
     def forward(self, ypred, ytgt): # b, 3, 200, 400
