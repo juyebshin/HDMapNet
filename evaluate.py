@@ -27,7 +27,8 @@ def eval_iou(model, val_loader):
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
-            semantic_gt = semantic_gt.cuda().float()
+            semantic = semantic.softmax(1).cuda() # b, 4, 200, 400
+            semantic_gt = semantic_gt.cuda().float() # b, 4, 200, 400
             intersects, union = get_batch_iou(onehot_encoding(semantic), semantic_gt)
             total_intersects += intersects
             total_union += union
@@ -44,10 +45,11 @@ def main(args):
         'dbound': args.dbound,
         'thickness': args.thickness,
         'angle_class': args.angle_class,
+        'dist_threshold': args.dist_threshold, # 10.0
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
+    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     print(eval_iou(model, val_loader))
@@ -59,8 +61,8 @@ if __name__ == '__main__':
     parser.add_argument("--logdir", type=str, default='./runs')
 
     # nuScenes config
-    parser.add_argument('--dataroot', type=str, default='dataset/nuScenes/')
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
@@ -101,6 +103,11 @@ if __name__ == '__main__':
     parser.add_argument("--scale_var", type=float, default=1.0)
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
+    parser.add_argument("--scale_dt", type=float, default=1.0)
+
+    # distance transform config
+    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     args = parser.parse_args()
     main(args)
