@@ -70,7 +70,7 @@ def line_geom_to_mask(layer_geom, confidence_levels, local_box, canvas_size, thi
             new_line = affinity.scale(new_line, xfact=scale_width, yfact=scale_height, origin=(0, 0))
             confidence_levels.append(confidence)
             if new_line.geom_type == 'MultiLineString':
-                for new_single_line in new_line:
+                for new_single_line in new_line.geoms:
                     map_mask, idx = mask_for_lines(new_single_line, map_mask, thickness, idx, type, angle_class)
             else:
                 map_mask, idx = mask_for_lines(new_line, map_mask, thickness, idx, type, angle_class)
