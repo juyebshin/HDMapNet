@@ -32,6 +32,18 @@ class SimpleLoss(torch.nn.Module):
         loss = self.loss_fn(ypred, ytgt)
         return loss
 
+# temp
+class VertexLoss(torch.nn.Module):
+    def __init__(self, pos_weight):
+        super(VertexLoss, self).__init__()
+        self.loss_fn = torch.nn.CrossEntropyLoss()
+    
+    def forward(self, ypred, ytgt): # b, 65, 25, 50
+        # ypred: b, 65, 25, 50
+        # ytgt: b, 25, 50 values [0-64)
+        loss = self.loss_fn(ypred, ytgt)
+        return loss
+
 
 class MSEWithReluLoss(torch.nn.Module):
     def __init__(self, dist_threshold=10.0):

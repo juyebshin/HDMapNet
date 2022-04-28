@@ -8,10 +8,11 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss
+from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, VertexLoss
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
+from data.utils import label_onehot_decoding
 from evaluation.iou import get_batch_iou
 from evaluation.angle_diff import calc_angle_diff
 from model import get_model
@@ -52,7 +53,7 @@ def train(args):
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg)
+    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
 
     if args.finetune:
         model.load_state_dict(torch.load(args.modelf), strict=False)
@@ -71,6 +72,7 @@ def train(args):
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
+    vt_loss_fn = VertexLoss(args.pos_weight).cuda()
 
     model.train()
     counter = 0
@@ -82,7 +84,7 @@ def train(args):
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -112,8 +114,13 @@ def train(args):
                 dt_loss = dt_loss_fn(distance, distance_gt)
             else:
                 dt_loss = 0
+            
+            if args.vertex_pred:
+                vt_loss = vt_loss_fn(vertex, vertex_gt)
+            else:
+                vt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt
+            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
@@ -138,6 +145,7 @@ def train(args):
                 writer.add_scalar('train/final_loss', final_loss, counter)
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
+                writer.add_scalar('train/vt_loss', vt_loss, counter)
 
         iou = eval_iou(model, val_loader)
         logger.info(f"EVAL[{epoch:>2d}]:    "
@@ -211,6 +219,7 @@ if __name__ == '__main__':
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
+    parser.add_argument("--scale_vt", type=float, default=1.0)
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true')

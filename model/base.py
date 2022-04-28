@@ -129,11 +129,19 @@ class BevEncode(nn.Module):
         if vertex_pred:
             self.vertex_head = nn.Sequential(
                 # b, 256, 100, 200
-                nn.Conv2d(256, 128, kernel_size=3, padding=0, bias=False),
+                nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+                # b, 128, 100, 200
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                # b, 256, 50, 100
+                nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False), # 65: cell_size*cell_size + 1 (dustbin)
                 # b, 128, 50, 100
                 nn.BatchNorm2d(128),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(128, 65, kernel_size=3, padding=0, bias=False),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                # b, 128, 25, 50
+                nn.Conv2d(128, 65, kernel_size=1, padding=0), # 65: cell_size*cell_size + 1 (dustbin)
                 # b, 65, 25, 50
             )
 
@@ -171,6 +179,12 @@ class BevEncode(nn.Module):
         x2 = self.layer3(x) # b, 256, 25, 50
 
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
+
+        if self.vertex_pred:
+            x_vertex = self.vertex_head(x) # b, 65, 25, 50
+        else:
+            x_vertex = None
+
         if self.distance_reg:
             x_dt = self.up_dt(x) # b, 3, 200, 400
             # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
@@ -180,11 +194,6 @@ class BevEncode(nn.Module):
             x_dt = None
             x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
         # x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
-
-        if self.vertex_pred:
-            x_vertex = self.vertex_head(x) # b, 65, 25, 50
-        else:
-            x_vertex = None
         
         if self.instance_seg:
             x_embedded = self.up1_embedded(x2, x1)

@@ -48,7 +48,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         [255, 0, 0] # contour
         ])
 
-    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
+    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=True)
     gt_path = os.path.join(dataroot, 'samples', 'semanticGT')
 
     if not os.path.exists(gt_path):
