@@ -150,7 +150,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
         multi_vertex[[i for i in remove_index], [d for d in remove_depth]] = 0
         vertex_masks[:, [row for row in rows], [col for col in cols]] = multi_vertex.transpose(1, 0)
         vertex_sum = vertex_masks.sum(0) # number of vertex in each cell, Hc, Wc
-    assert np.max(vertex_sum) < 1, f"max(vertex_sum) expected less than 1, but got: {np.max(vertex_sum)}" # make sure one vertex per cell
+    assert np.max(vertex_sum) <= 1, f"max(vertex_sum) expected less than 1, but got: {np.max(vertex_sum)}" # make sure one vertex per cell
     # randomly select one vertex and remove all others
     dust = np.zeros_like(vertex_sum, dtype='uint8') # Hc, Wc
     dust[vertex_sum == 0] = 1
