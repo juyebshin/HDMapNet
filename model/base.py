@@ -86,7 +86,7 @@ class CamEncode(nn.Module):
 
 
 class BevEncode(nn.Module):
-    def __init__(self, inC, outC, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True):
+    def __init__(self, inC, outC, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
         super(BevEncode, self).__init__()
         trunk = resnet18(pretrained=False, zero_init_residual=True)
         self.conv1 = nn.Conv2d(inC, 64, kernel_size=7, stride=2, padding=3,
@@ -110,16 +110,32 @@ class BevEncode(nn.Module):
 
         self.distance_reg = distance_reg
         if distance_reg:
-            self.up1_dt = Up(64 + 256, 256, scale_factor=4)
-            self.up2_dt = nn.Sequential( # distance transform prediction
+            # self.up1_dt = Up(64 + 256, 256, scale_factor=4)
+            self.up_dt = nn.Sequential( # distance transform prediction
+                # b, 256, 100, 200
                 nn.Upsample(scale_factor=2, mode='bilinear',
                             align_corners=True),
+                # b, 256, 200, 400
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
+                # b, 128, 200, 400
                 nn.BatchNorm2d(128),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
+                # b, 3, 200, 400
             )
             self.up3 = UpDT(256 + outC-1, outC, scale_factor=2)
+
+        self.vertex_pred = vertex_pred
+        if vertex_pred:
+            self.vertex_head = nn.Sequential(
+                # b, 256, 100, 200
+                nn.Conv2d(256, 128, kernel_size=3, padding=0, bias=False),
+                # b, 128, 50, 100
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 65, kernel_size=3, padding=0, bias=False),
+                # b, 65, 25, 50
+            )
 
         self.instance_seg = instance_seg
         if instance_seg:
@@ -156,8 +172,7 @@ class BevEncode(nn.Module):
 
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
         if self.distance_reg:
-            x_dt = self.up1_dt(x2, x1) # b, 256, 100, 200
-            x_dt = self.up2_dt(x_dt) # b, 3, 200, 400
+            x_dt = self.up_dt(x) # b, 3, 200, 400
             # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
             # concat [x, x_dt] and upsample to get dense semantic prediction
             x = self.up3(x, self.relu(x_dt)) # b, 4, 200, 400
@@ -165,6 +180,11 @@ class BevEncode(nn.Module):
             x_dt = None
             x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
         # x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
+
+        if self.vertex_pred:
+            x_vertex = self.vertex_head(x) # b, 65, 25, 50
+        else:
+            x_vertex = None
         
         if self.instance_seg:
             x_embedded = self.up1_embedded(x2, x1)
@@ -178,4 +198,4 @@ class BevEncode(nn.Module):
         else:
             x_direction = None
 
-        return x, x_dt, x_embedded, x_direction
+        return x, x_dt, x_vertex, x_embedded, x_direction
