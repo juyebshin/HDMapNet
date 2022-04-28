@@ -29,7 +29,7 @@ def get_discrete_degree(vec, angle_class=36):
 
 def mask_for_lines(lines, mask, thickness, idx, type='index', angle_class=36):
     coords = np.asarray(list(lines.coords), np.int32)
-    coords = coords.reshape((-1, 2))
+    coords = coords.reshape((-1, 2)) # (N, 2), cols, rows
     if len(coords) < 2:
         return mask, idx
     if type == 'backward':
@@ -38,6 +38,8 @@ def mask_for_lines(lines, mask, thickness, idx, type='index', angle_class=36):
     if type == 'index':
         cv2.polylines(mask, [coords], False, color=idx, thickness=thickness)
         idx += 1
+    elif type == 'vertex':
+        mask[ [coord[1] for coord in coords], [coord[0] for coord in coords] ] = 1
     else:
         for i in range(len(coords) - 1):
             cv2.polylines(mask, [coords[i:]], False, color=get_discrete_degree(coords[i + 1] - coords[i], angle_class=angle_class), thickness=thickness)
@@ -68,6 +70,7 @@ def line_geom_to_mask(layer_geom, confidence_levels, local_box, canvas_size, thi
         if not new_line.is_empty:
             new_line = affinity.affine_transform(new_line, [1.0, 0.0, 0.0, 1.0, trans_x, trans_y])
             new_line = affinity.scale(new_line, xfact=scale_width, yfact=scale_height, origin=(0, 0))
+            # new_line: vectors in BEV pixel coordinate
             confidence_levels.append(confidence)
             if new_line.geom_type == 'MultiLineString':
                 for new_single_line in new_line.geoms:
@@ -86,7 +89,7 @@ def overlap_filter(mask, filter_mask):
     return mask
 
 
-def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, angle_class):
+def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, angle_class, cell_size=8):
     confidence_levels = [-1]
     vector_num_list = {}
     for i in range(num_classes):
@@ -115,6 +118,23 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
         backward_masks.append(backward_mask)
         distance_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1)
         distance_masks.append(distance_mask)
+
+    # canvas_size: tuple (int, int)
+    # vertex_mask: 65, 25, 50
+    vertex_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1, type='vertex')
+    H, W = vertex_mask.shape # 200, 400
+    Hc, Wc = int(H/cell_size), int(W/cell_size)
+    vertex_mask = np.reshape(vertex_mask, [Hc, cell_size, Wc, cell_size]) # Hc, 8, Wc, 8
+    vertex_mask = np.transpose(vertex_mask, [0, 2, 1, 3]) # Hc, Wc, 8, 8
+    vertex_mask = np.reshape(vertex_mask, [Hc, Wc, cell_size*cell_size]) # Hc, Wc, 64
+    vertex_mask = vertex_mask.transpose(2, 0, 1) # 64, Hc, Wc
+    vertex_sum = vertex_mask.sum(0) # number of vertex in each cell, Hc, Wc
+    rows, cols = np.where(vertex_sum > 1) # find cell with more then one vertex
+    # randomly select one vertex
+    dust = np.zeros_like(vertex_sum) # Hc, Wc
+    dust[vertex_sum == 0] = 1
+    dust = np.expand_dims(dust, axis=0) # 1, Hc, Wc
+    vertex_mask = np.concatenate((vertex_mask, dust), axis=0) # 65, Hc, Wc
 
     filter_masks = np.stack(filter_masks)
     instance_masks = np.stack(instance_masks)
