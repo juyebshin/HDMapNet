@@ -27,7 +27,7 @@ def redundant_filter(mask, kernel=25):
     return mask
 
 
-def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_threshold):
+def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_threshold, cell_size):
     data_conf = {
         'image_size': (900, 1600),
         'xbound': xbound,
@@ -35,6 +35,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         'thickness': thickness,
         'angle_class': angle_class,
         'dist_threshold': dist_threshold,
+        'cell_size': cell_size,
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
@@ -55,7 +56,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
 
     for idx in tqdm.tqdm(range(dataset.__len__())):
         rec = dataset.nusc.sample[idx]
-        semantic_mask, instance_mask, forward_mask, backward_mask, _, distance_mask = dataset.get_semantic_map(rec)
+        semantic_mask, instance_mask, forward_mask, backward_mask, _, distance_mask, vertex_mask = dataset.get_semantic_map(rec)
 
         lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
 
@@ -97,6 +98,17 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         distance_mask = np.max(distance_mask, axis=0) # 200, 400
         distance_color_mask = cmap(distance_mask)[..., :3] * 255 # 200, 400, 3
         Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
+
+        vertex_mask = vertex_mask.numpy().astype('uint8') * 255 # 65, 25, 50
+        nodust = vertex_mask[:-1, :, :] # remove dustbin, 64, 25, 50
+        Hc, Wc = vertex_mask.shape[1:] # 25, 50
+        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+        heatmap = np.reshape(nodust, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+        heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+        heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
+        vertex_path = os.path.join(base_path, "VERTEX.png")
+        vertex_color_mask = cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+        Image.fromarray(vertex_color_mask.astype('uint8')).save(vertex_path)
 
         fig = plt.figure(figsize=(4, 2))
         ax = fig.add_axes([0, 0, 1, 1])
@@ -141,6 +153,7 @@ if __name__ == '__main__':
     parser.add_argument("--thickness", type=int, default=5)
     parser.add_argument("--angle_class", type=int, default=36)
     parser.add_argument("--dist_threshold", type=float, default=10.0)
+    parser.add_argument("--cell_size", type=int, default=8)
     args = parser.parse_args()
 
-    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold)
+    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold, args.cell_size)

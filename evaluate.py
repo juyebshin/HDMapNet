@@ -21,7 +21,7 @@ def eval_iou(model, val_loader):
     total_intersects = 0
     total_union = 0
     with torch.no_grad():
-        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt in tqdm.tqdm(val_loader):
+        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt in tqdm.tqdm(val_loader):
 
             semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
@@ -46,6 +46,7 @@ def main(args):
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
+        'cell_size': args.cell_size, # 8
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
@@ -108,6 +109,10 @@ if __name__ == '__main__':
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
+
+    # vertex location classification config
+    parser.add_argument("--vertex_pred", action='store_true')
+    parser.add_argument("--cell_size", type=int, default=8)
 
     args = parser.parse_args()
     main(args)

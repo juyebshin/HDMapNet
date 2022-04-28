@@ -216,6 +216,7 @@ def main(args):
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
+        'cell_size': args.cell_size, # 8
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
@@ -281,6 +282,10 @@ if __name__ == '__main__':
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
+
+    # vertex location classification config
+    parser.add_argument("--vertex_pred", action='store_true')
+    parser.add_argument("--cell_size", type=int, default=8)
 
     args = parser.parse_args()
     main(args)

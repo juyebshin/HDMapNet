@@ -48,6 +48,7 @@ def train(args):
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
+        'cell_size': args.cell_size, # 8
     }
 
     train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
@@ -77,7 +78,7 @@ def train(args):
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
-                     yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt) in enumerate(train_loader):
+                     yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
 
@@ -88,6 +89,7 @@ def train(args):
             semantic_gt = semantic_gt.cuda().float()
             instance_gt = instance_gt.cuda()
             distance_gt = distance_gt.cuda()
+            vertex_gt = vertex_gt.cuda().float()
             seg_loss = loss_fn(semantic, semantic_gt)
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
@@ -213,6 +215,10 @@ if __name__ == '__main__':
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
+
+    # vertex location classification config
+    parser.add_argument("--vertex_pred", action='store_true')
+    parser.add_argument("--cell_size", type=int, default=8)
 
     args = parser.parse_args()
     train(args)

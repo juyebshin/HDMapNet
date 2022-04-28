@@ -39,7 +39,9 @@ def mask_for_lines(lines, mask, thickness, idx, type='index', angle_class=36):
         cv2.polylines(mask, [coords], False, color=idx, thickness=thickness)
         idx += 1
     elif type == 'vertex':
-        mask[ [coord[1] for coord in coords], [coord[0] for coord in coords] ] = 1
+        for coord in coords:
+            cv2.circle(mask, coord, radius=0, color=idx, thickness=-1)
+        # mask[ [coord[1] for coord in coords], [coord[0] for coord in coords] ] = 1
     else:
         for i in range(len(coords) - 1):
             cv2.polylines(mask, [coords[i:]], False, color=get_discrete_degree(coords[i + 1] - coords[i], angle_class=angle_class), thickness=thickness)
@@ -107,6 +109,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
     forward_masks = []
     backward_masks = []
     distance_masks = []
+    vertex_masks = []
     for i in range(num_classes):
         map_mask, idx = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, thickness, idx)
         instance_masks.append(map_mask)
@@ -118,23 +121,42 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
         backward_masks.append(backward_mask)
         distance_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1)
         distance_masks.append(distance_mask)
+        vertex_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1, type='vertex')
+        vertex_masks.append(vertex_mask)
 
     # canvas_size: tuple (int, int)
-    # vertex_mask: 65, 25, 50
-    vertex_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1, type='vertex')
+    # vertex_masks: 3, 200, 400
+    vertex_masks = np.stack(vertex_masks)
+    vertex_masks = vertex_masks.max(0)
     H, W = vertex_mask.shape # 200, 400
     Hc, Wc = int(H/cell_size), int(W/cell_size)
-    vertex_mask = np.reshape(vertex_mask, [Hc, cell_size, Wc, cell_size]) # Hc, 8, Wc, 8
-    vertex_mask = np.transpose(vertex_mask, [0, 2, 1, 3]) # Hc, Wc, 8, 8
-    vertex_mask = np.reshape(vertex_mask, [Hc, Wc, cell_size*cell_size]) # Hc, Wc, 64
-    vertex_mask = vertex_mask.transpose(2, 0, 1) # 64, Hc, Wc
-    vertex_sum = vertex_mask.sum(0) # number of vertex in each cell, Hc, Wc
-    rows, cols = np.where(vertex_sum > 1) # find cell with more then one vertex
-    # randomly select one vertex
-    dust = np.zeros_like(vertex_sum) # Hc, Wc
+    vertex_masks = np.reshape(vertex_masks, [Hc, cell_size, Wc, cell_size]) # Hc, 8, Wc, 8
+    vertex_masks = np.transpose(vertex_masks, [0, 2, 1, 3]) # Hc, Wc, 8, 8
+    vertex_masks = np.reshape(vertex_masks, [Hc, Wc, cell_size*cell_size]) # Hc, Wc, 64
+    vertex_masks = vertex_masks.transpose(2, 0, 1) # 64, Hc, Wc
+    vertex_sum = vertex_masks.sum(0) # number of vertex in each cell, Hc, Wc
+    # find cell with more then one vertex
+    rows, cols = np.where(vertex_sum > 1)
+    # N == len(rows) == len(cols)
+    if len(rows):
+        multi_vertex = vertex_masks[:, [row for row in rows], [col for col in cols]].transpose(1, 0) # N, 64
+        index, depth = np.where(multi_vertex > 0)
+        nums_multi_vertex = np.histogram(index, bins=len(rows), range=(0, len(rows)))[0]
+        select = np.random.randint(nums_multi_vertex)
+        nums_cum = np.insert(np.cumsum(nums_multi_vertex[:-1]), 0, 0)
+        select_cum = select + nums_cum
+        remove_index = np.delete(index, select_cum)
+        remove_depth = np.delete(depth, select_cum)
+        multi_vertex[[i for i in remove_index], [d for d in remove_depth]] = 0
+        vertex_masks[:, [row for row in rows], [col for col in cols]] = multi_vertex.transpose(1, 0)
+        vertex_sum = vertex_masks.sum(0) # number of vertex in each cell, Hc, Wc
+    assert np.max(vertex_sum) == 1 # make sure one vertex per cell
+    # randomly select one vertex and remove all others
+    dust = np.zeros_like(vertex_sum, dtype='uint8') # Hc, Wc
     dust[vertex_sum == 0] = 1
     dust = np.expand_dims(dust, axis=0) # 1, Hc, Wc
-    vertex_mask = np.concatenate((vertex_mask, dust), axis=0) # 65, Hc, Wc
+    vertex_masks = np.concatenate((vertex_masks, dust), axis=0) # 65, Hc, Wc
+    assert np.min(vertex_masks.sum(0)) == 1
 
     filter_masks = np.stack(filter_masks)
     instance_masks = np.stack(instance_masks)
@@ -148,7 +170,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
 
     distance_masks = distance_masks != 0
 
-    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks), distance_masks
+    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks), distance_masks, torch.tensor(vertex_masks)
 
 
 def rasterize_map(vectors, patch_size, canvas_size, num_classes, thickness):

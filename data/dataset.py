@@ -181,10 +181,11 @@ class HDMapNetSemanticDataset(HDMapNetDataset):
         self.thickness = data_conf['thickness']
         self.angle_class = data_conf['angle_class']
         self.dist_threshold = data_conf['dist_threshold']
+        self.cell_size = data_conf['cell_size']
 
     def get_semantic_map(self, rec):
         vectors = self.get_vectors(rec)
-        instance_masks, forward_masks, backward_masks, distance_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
+        instance_masks, forward_masks, backward_masks, distance_masks, vertex_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
         semantic_masks = instance_masks != 0
         semantic_masks = torch.cat([(~torch.any(semantic_masks, axis=0)).unsqueeze(0), semantic_masks])
         instance_masks = instance_masks.sum(0)
@@ -194,15 +195,15 @@ class HDMapNetSemanticDataset(HDMapNetDataset):
         direction_masks = direction_masks / direction_masks.sum(0)
         # obtain normalized DT [0.0, 1.0], truncated by 10
         distance_masks = get_distance_transform(distance_masks, self.dist_threshold)
-        return semantic_masks, instance_masks, forward_masks, backward_masks, direction_masks, torch.tensor(distance_masks, dtype=torch.float32)
+        return semantic_masks, instance_masks, forward_masks, backward_masks, direction_masks, torch.tensor(distance_masks, dtype=torch.float32), vertex_masks.type(torch.bool)
 
     def __getitem__(self, idx):
         rec = self.samples[idx]
         imgs, trans, rots, intrins, post_trans, post_rots = self.get_imgs(rec)
         lidar_data, lidar_mask = self.get_lidar(rec)
         car_trans, yaw_pitch_roll = self.get_ego_pose(rec)
-        semantic_masks, instance_masks, _, _, direction_masks, distance_masks = self.get_semantic_map(rec)
-        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, direction_masks, distance_masks
+        semantic_masks, instance_masks, _, _, direction_masks, distance_masks, vertex_masks = self.get_semantic_map(rec)
+        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, direction_masks, distance_masks, vertex_masks
 
 
 def semantic_dataset(version, dataroot, data_conf, bsz, nworkers):
