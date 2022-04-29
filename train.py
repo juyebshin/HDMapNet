@@ -8,7 +8,7 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, VertexLoss
+from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, VertexLoss, FocalLoss
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -68,7 +68,7 @@ def train(args):
     sched = StepLR(opt, 10, 0.1)
     writer = SummaryWriter(logdir=args.logdir)
 
-    loss_fn = SimpleLoss(args.pos_weight).cuda()
+    loss_fn = FocalLoss().cuda()
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
