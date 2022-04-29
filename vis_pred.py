@@ -1,3 +1,4 @@
+from builtins import print
 import enum
 import os
 import argparse
@@ -23,7 +24,7 @@ def onehot_encoding(logits, dim=1):
     return one_hot
 
 
-def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_threshold=None):
+def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_threshold=None, vertex_pred=False, cell_size=None, conf_threshold=0.015):
     semantic_color = np.array([
         [0, 0, 0], # background
         [0, 128, 0], # line
@@ -31,24 +32,25 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
         [255, 0, 0] # contour
         ])
     dist_cmap = get_cmap('magma')
+    vertex_cmap = get_cmap('hot')
     model.eval()
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt) in enumerate(val_loader):
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt) in enumerate(val_loader):
 
-            semantic, distance, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
+            vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
             # semantic[semantic < 0.1] = np.nan
             semantic[semantic < 0.1] = 0.0
 
             semantic_gt = semantic_gt.cpu().numpy().astype('uint8')
             distance_gt = distance_gt.cpu().numpy().astype('float32')
+            vertex_gt = vertex_gt.cpu().numpy().astype('uint8') * 255
 
-            vmin = np.min(distance)
-            vmax = np.max(distance)
-            distance = (distance - vmin) / (vmax - vmin)
+            distance = (distance - 0.0) / (dist_threshold - 0.0)
 
             vmin = np.min(distance_gt)
             vmax = np.max(distance_gt)
@@ -86,11 +88,11 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     print('saving', imname)
                     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
-                    for idx, distance_single in enumerate(distance[si]): # for each class 0, 1, 2
-                        distance_pred_color = dist_cmap(distance_single)[..., :3] * 255 # 200, 400, 3
-                        imname = os.path.join(impath, f'eval{batchi:06}_{si:03}_{idx:01}.png')
-                        print('saving', imname)
-                        Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
+                    # for idx, distance_single in enumerate(distance[si]): # for each class 0, 1, 2
+                    #     distance_pred_color = dist_cmap(distance_single)[..., :3] * 255 # 200, 400, 3
+                    #     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}_{idx:01}.png')
+                    #     print('saving', imname)
+                    #     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
                     # distance_gt: b, 3, 200, 400
                     distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
@@ -102,7 +104,43 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     print('saving', imname)
                     Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
-
+                if vertex_pred:
+                    nodust = vertex[si, :-1, :, :] # 64, 25, 50
+                    Hc, Wc = nodust.shape[1:] # 25, 50
+                    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+                    heatmap = np.reshape(nodust, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+                    heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
+                    heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
+                    heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'heatmap')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(heatmap_color.astype('uint8')).save(imname)
+                    heatmap[heatmap > 0] = 1
+                    vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'vertex')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(vertex_color.astype('uint8')).save(imname)
+                    
+                    nodust_gt = vertex_gt[si, :-1, :, :] # 64, 25, 50
+                    Hc, Wc = nodust_gt.shape[1:] # 25, 50
+                    nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
+                    heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
+                    heatmap_gt = np.reshape(heatmap_gt, [Hc*cell_size, Wc*cell_size]) # 200, 400
+                    heatmap_gt_color = vertex_cmap(heatmap_gt)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'vertex_gt')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(heatmap_gt_color.astype('uint8')).save(imname)
 
                 # plt.figure(figsize=(4, 2))
                 # plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1)
@@ -224,7 +262,7 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.conf_threshold)
     if args.instance_seg and args.direction_pred:
         vis_vector(model, val_loader, args.angle_class, args.logdir)
 
@@ -245,14 +283,14 @@ if __name__ == '__main__':
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)
-    parser.add_argument("--bsz", type=int, default=4)
+    parser.add_argument("--bsz", type=int, default=12)
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default=None)
+    parser.add_argument('--modelf', type=str, default='./runs/distance_vertex/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
@@ -286,6 +324,7 @@ if __name__ == '__main__':
     # vertex location classification config
     parser.add_argument("--vertex_pred", action='store_true')
     parser.add_argument("--cell_size", type=int, default=8)
+    parser.add_argument("--conf_threshold", type=float, default=0.01)
 
     args = parser.parse_args()
     main(args)
