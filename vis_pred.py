@@ -324,7 +324,7 @@ if __name__ == '__main__':
     # vertex location classification config
     parser.add_argument("--vertex_pred", action='store_true')
     parser.add_argument("--cell_size", type=int, default=8)
-    parser.add_argument("--conf_threshold", type=float, default=0.01)
+    parser.add_argument("--conf_threshold", type=float, default=0.05)
 
     args = parser.parse_args()
     main(args)

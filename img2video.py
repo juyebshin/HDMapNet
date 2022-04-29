@@ -12,7 +12,7 @@ import cv2
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Image sequence to video translation')
-    parser.add_argument('--input-dir', type=str, default='runs/distance_vertex/seg', 
+    parser.add_argument('--input-dir', type=str, default='runs/distance_vertex/vertex', 
                         help='Directory to sequence of images')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Directory where output video is saved. default: same as input-dir')
