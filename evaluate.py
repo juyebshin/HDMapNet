@@ -2,22 +2,62 @@ import argparse
 import tqdm
 
 import torch
+import numpy as np
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou
 from model import get_model
+from data.visualize import colorise
 
 
 def onehot_encoding(logits, dim=1):
-    max_idx = torch.argmax(logits, dim, keepdim=True)
-    one_hot = logits.new_full(logits.shape, 0)
-    one_hot.scatter_(dim, max_idx, 1)
+    # logits: b, C, 200, 400
+    max_idx = torch.argmax(logits, dim, keepdim=True) # b, 1, 200, 400
+    one_hot = logits.new_full(logits.shape, 0) # zeros b, C, 200, 400
+    one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
+def visualize(writer, title, dt_mask, vt_mask, dt, heatmap, vertex, step):
+    # dt: b, 3, 200, 400 tensor
+    # heatmap: b, 65, 25, 50 tensor
+    dt_mask = dt_mask.detach().cpu().float().numpy()
+    vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
+    dt = dt.detach().cpu().float().numpy()
+    heatmap = heatmap.detach().cpu().float().numpy()[0] # 65, 25, 50
+    vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
 
-def eval_iou(model, val_loader):
+    nodust_gt = vt_mask[:-1, :, :] # 64, 25, 50
+    Hc, Wc = vt_mask.shape[1:] # 25, 50
+    nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
+    heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+    heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
+    heatmap_gt = np.reshape(heatmap_gt, [Hc*8, Wc*8]) # 200, 400
+
+    nodust = heatmap[:-1, :, :] # 64, 25, 50
+    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+    heatmap = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+    heatmap = np.reshape(heatmap, [Hc*8, Wc*8]) # 200, 400
+
+    nodust = vertex[:-1, :, :] # 64, 25, 50
+    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+    vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+    vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
+    vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
+
+    writer.add_image(f'{title}/distance_transform_gt', colorise(dt_mask[0], 'magma'), step, dataformats='NHWC')
+    writer.add_image(f'{title}/distance_transform_pred', colorise(dt[0], 'magma'), step, dataformats='NHWC')
+    writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot'), step, dataformats='HWC')
+    writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot'), step, dataformats='HWC')
+    writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot'), step, dataformats='HWC')
+
+
+
+def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
+    # st
     model.eval()
+    counter = 0
     total_intersects = 0
     total_union = 0
     with torch.no_grad():
@@ -32,6 +72,16 @@ def eval_iou(model, val_loader):
             intersects, union = get_batch_iou(onehot_encoding(semantic), semantic_gt)
             total_intersects += intersects
             total_union += union
+
+            counter += 1
+            if writer is not None and counter % vis_interval == 0:
+                
+                distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
+                # distance_gt = distance_gt.cuda() # b, 3, 200, 400
+                heatmap = vertex.softmax(1).cuda() # b, 65, 25, 50
+                heatmap_onehot = onehot_encoding(heatmap)
+                # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
+                visualize(writer, 'eval', distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, step)
     return total_intersects / (total_union + 1e-7)
 
 

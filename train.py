@@ -8,7 +8,7 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, VertexLoss, FocalLoss
+from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -16,7 +16,7 @@ from data.utils import label_onehot_decoding
 from evaluation.iou import get_batch_iou
 from evaluation.angle_diff import calc_angle_diff
 from model import get_model
-from evaluate import onehot_encoding, eval_iou
+from evaluate import onehot_encoding, eval_iou, visualize
 
 
 def write_log(writer, ious, title, counter):
@@ -68,11 +68,11 @@ def train(args):
     sched = StepLR(opt, 10, 0.1)
     writer = SummaryWriter(logdir=args.logdir)
 
-    loss_fn = FocalLoss().cuda()
+    loss_fn = SimpleLoss(args.pos_weight).cuda()
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
-    vt_loss_fn = VertexLoss(args.pos_weight).cuda()
+    vt_loss_fn = CEWithSoftmaxLoss().cuda()
 
     model.train()
     counter = 0
@@ -146,8 +146,14 @@ def train(args):
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
+            
+            if counter % 200 == 0:
+                distance = distance.relu().clamp(max=args.dist_threshold)
+                heatmap = vertex.softmax(1)
+                heatmap_onehot = onehot_encoding(heatmap) # b, 65, 25, 50
+                visualize(writer, 'train', distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, counter)
 
-        iou = eval_iou(model, val_loader)
+        iou = eval_iou(model, val_loader, writer, epoch, 200)
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     f"IOU: {np.array2string(iou[1:].numpy(), precision=3, floatmode='fixed')}")
 

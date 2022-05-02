@@ -105,10 +105,11 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
                 if vertex_pred:
-                    nodust = vertex[si, :-1, :, :] # 64, 25, 50
-                    Hc, Wc = nodust.shape[1:] # 25, 50
-                    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-                    heatmap = np.reshape(nodust, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    # heatmap
+                    heatmap = vertex[si, :-1, :, :] # 64, 25, 50
+                    Hc, Wc = heatmap.shape[1:] # 25, 50
+                    heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
+                    heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
                     heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
                     heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
                     heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
@@ -119,6 +120,10 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                     print('saving', imname)
                     Image.fromarray(heatmap_color.astype('uint8')).save(imname)
+                    # vertex
+                    # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
+                    # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
+                    # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
                     heatmap[heatmap > 0] = 1
                     vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
                     impath = os.path.join(logdir, 'vertex')
