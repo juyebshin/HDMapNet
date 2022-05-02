@@ -277,7 +277,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='HDMapNet_cam')
+    parser.add_argument("--model", type=str, default='VectorMapNet_cam')
 
     # training config
     parser.add_argument("--nepochs", type=int, default=30)
