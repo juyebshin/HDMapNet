@@ -34,9 +34,9 @@ class SimpleLoss(torch.nn.Module):
         return loss
 
 # temp
-class VertexLoss(torch.nn.Module):
-    def __init__(self, pos_weight):
-        super(VertexLoss, self).__init__()
+class CEWithSoftmaxLoss(torch.nn.Module):
+    def __init__(self):
+        super(CEWithSoftmaxLoss, self).__init__()
         self.loss_fn = torch.nn.CrossEntropyLoss()
     
     def forward(self, ypred, ytgt): # b, 65, 25, 50
