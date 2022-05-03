@@ -151,7 +151,7 @@ def train(args):
                 distance = distance.relu().clamp(max=args.dist_threshold)
                 heatmap = vertex.softmax(1)
                 heatmap_onehot = onehot_encoding(heatmap) # b, 65, 25, 50
-                visualize(writer, 'train', distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, counter)
+                visualize(writer, 'train', imgs, distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, counter)
 
         iou = eval_iou(model, val_loader, writer, epoch, 200)
         logger.info(f"EVAL[{epoch:>2d}]:    "

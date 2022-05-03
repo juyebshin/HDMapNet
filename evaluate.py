@@ -3,12 +3,14 @@ import tqdm
 
 import torch
 import numpy as np
+import torchvision
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou
 from model import get_model
 from data.visualize import colorise
+from data.image import denormalize_img
 
 
 def onehot_encoding(logits, dim=1):
@@ -18,9 +20,16 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer, title, dt_mask, vt_mask, dt, heatmap, vertex, step):
+def visualize(writer, title, imgs, dt_mask, vt_mask, dt, heatmap, vertex, step):
+    # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
+    imgs = imgs.detach().cpu().float()[0] # 6, 3, 128, 352
+    # imgs = imgs.fliplr()
+    imgs = torch.index_select(imgs, 0, torch.LongTensor([0, 1, 2, 5, 4, 3]))
+    imgs_grid = torchvision.utils.make_grid(imgs, nrow=3) # 3, 262, 1064
+    imgs_grid = np.array(denormalize_img(imgs_grid)) # 262, 1064, 3
+
     dt_mask = dt_mask.detach().cpu().float().numpy()
     vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
     dt = dt.detach().cpu().float().numpy()
@@ -46,11 +55,15 @@ def visualize(writer, title, dt_mask, vt_mask, dt, heatmap, vertex, step):
     vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
     vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
 
+    writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
     writer.add_image(f'{title}/distance_transform_gt', colorise(dt_mask[0], 'magma'), step, dataformats='NHWC')
     writer.add_image(f'{title}/distance_transform_pred', colorise(dt[0], 'magma'), step, dataformats='NHWC')
-    writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot'), step, dataformats='HWC')
-    writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot'), step, dataformats='HWC')
-    writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot'), step, dataformats='HWC')
+    writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot', 0.0, 1.0), step, dataformats='HWC')
+    writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+    writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
+    heatmap[heatmap < 0.015] = 0.0
+    heatmap[heatmap > 0.0] = 1.0
+    writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
 
 
 
@@ -81,7 +94,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
                 heatmap = vertex.softmax(1).cuda() # b, 65, 25, 50
                 heatmap_onehot = onehot_encoding(heatmap)
                 # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                visualize(writer, 'eval', distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, step)
+                visualize(writer, 'eval', imgs, distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, step)
     return total_intersects / (total_union + 1e-7)
 
 
