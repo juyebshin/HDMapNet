@@ -4,6 +4,7 @@ import tqdm
 import torch
 import numpy as np
 import torchvision
+from tensorboardX import SummaryWriter
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -20,7 +21,7 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer, title, imgs, dt_mask, vt_mask, dt, heatmap, vertex, step):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, dt: torch.Tensor, heatmap: torch.Tensor, vertex: torch.Tensor, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
