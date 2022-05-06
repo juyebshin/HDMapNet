@@ -33,4 +33,10 @@ def get_rot_2d(yaw):
     rot[..., 1, 1] = cos_yaw
     return rot
 
+def onehot_encoding(logits, dim=1):
+    # logits: b, C, 200, 400
+    max_idx = torch.argmax(logits, dim, keepdim=True) # b, 1, 200, 400
+    one_hot = logits.new_full(logits.shape, 0) # zeros b, C, 200, 400
+    one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
+    return one_hot
 
