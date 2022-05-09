@@ -5,13 +5,28 @@ import torch.nn.functional as F
 from .hdmapnet import HDMapNet
 from .utils import onehot_encoding
 
+def MLP(channels: list, do_bn=True):
+    """ MLP """
+    n = len(channels)
+    layers = []
+    for i in range(1, n):
+        layers.append(
+            nn.Conv1d(channels[i - 1], channels[i], kernel_size=1, bias=True)
+        )
+        if i < (n-1):
+            if do_bn:
+                layers.append(nn.BatchNorm1d(channels[i]))
+            layers.append(nn.ReLU())
+    
+    return nn.Sequential(*layers)
+
 class ArgMax(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, dim=1):
         idx = torch.argmax(input, dim, keepdim=True) # b, 1, h, w
 
-        output = torch.zeros_like(input)
-        output.scatter_(dim, idx, 1)
+        output = torch.zeros_like(input) # b, c, h, w
+        output.scatter_(dim, idx, 1) # b, c, h, w
 
         return output
     @staticmethod
@@ -28,6 +43,7 @@ class VectorMapNet(nn.Module):
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
 
+        self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
         self.argmax = ArgMax.apply
         self.hdmapnet = HDMapNet(data_conf, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred)
 
@@ -40,9 +56,10 @@ class VectorMapNet(nn.Module):
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        onehot = onehot_encoding(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
+        # onehot = onehot_encoding(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
+        onehot = self.argmax(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
         onehot_max, _ = onehot.max(1) # b, 25, 50
-        vertices_cell = [torch.nonzero(vc) for vc in onehot_max] # tuple of length b, [N, 2(row, col)] tensor
+        vertices_cell = [torch.nonzero(vc) for vc in onehot_max] # list of length b, [N, 2(row, col)] tensor
         scores = scores[:, :-1] # b, 64, 25, 50
         b, _, h, w = scores.shape # b, 64, 25, 50
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
@@ -51,22 +68,25 @@ class VectorMapNet(nn.Module):
         onehot = onehot.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
 
         # Extract vertices
-        vertices = [torch.nonzero(v) for v in onehot] # tuple of length b, [N, 2(row, col)] tensor
-        scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # tuple of length b, [N] tensor
+        vertices = [torch.nonzero(v) for v in onehot] # list of length b, [N, 2(row, col)] tensor
+        scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
 
         # Discard vertices near the image borders
         vertices, scores = list(zip(*[
             self.remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
             for v, s in zip(vertices, scores)
-        ]))
+        ])) # tuple
 
-        center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
-        # Convert (h, w) to (x, y) h: 0~199, w: 0~399 -> x: -30~30, y: -15~15
+        # Convert (h, w) to (x, y), normalized
         # v: [N, 2]
-        vertices = [torch.flip(v, [1]).float().mul(self.resolution).add(center) for v in vertices]
+        vertices = [self.normalize_vertices(torch.flip(v, [1]).float(), onehot.shape) for v in vertices] # list of [N, 2] tensor
 
+        # Positional embedding (x, y, c)
+        pos_embedding = [torch.cat((v, torch.unsqueeze(s, 1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
+        # pos_embedding = torch.stack(pos_embedding) # b, N, 3
         # Extract distance transform
-        dt_embedding = self.sample_dt(vertices_cell, distance, self.cell_size)
+        dt_embedding = self.sample_dt(vertices_cell, distance, self.cell_size) # list of [N, 64] tensor
+        # dt_embedding = torch.stack(dt_embedding) # b, N, 64
 
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
@@ -92,3 +112,12 @@ class VectorMapNet(nn.Module):
         embedding = embedding.reshape(b, hc, wc, s*s) # b, 25, 50, 64
         embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 64] tensor
         return embedding
+
+    def normalize_vertices(self, vtcs: torch.Tensor, image_shape):
+        """ Normalize vertices locations in BEV space """
+        # vtcs: [N, 2] tensor in (x, y): (0~399, 0~199)
+        _, height, width = image_shape # b, h, w
+        one = vtcs.new_tensor(1) # 1
+        size = torch.stack([one*width, one*height])[None] # 1, 2
+        center = size / 2 # 1, 2
+        return (vtcs - center) / center # N, 2
