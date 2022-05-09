@@ -124,7 +124,7 @@ def train(args):
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
-            counter += 1
+            # counter += 1
             t1 = time()
 
             if counter % 10 == 0:
@@ -152,6 +152,8 @@ def train(args):
                 heatmap = vertex.softmax(1)
                 heatmap_onehot = onehot_encoding(heatmap) # b, 65, 25, 50
                 visualize(writer, 'train', imgs, distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, counter)
+                
+            counter += 1
 
         iou = eval_iou(model, val_loader, writer, epoch, 200)
         logger.info(f"EVAL[{epoch:>2d}]:    "
