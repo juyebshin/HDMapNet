@@ -8,7 +8,7 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss
+from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -116,6 +116,7 @@ def train(args):
                 dt_loss = 0
             
             if args.vertex_pred:
+                # vertex_gt: b, 65, h, w
                 vt_loss = vt_loss_fn(vertex, vertex_gt)
             else:
                 vt_loss = 0

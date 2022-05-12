@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,9 +42,22 @@ class CEWithSoftmaxLoss(torch.nn.Module):
     
     def forward(self, ypred, ytgt): # b, 65, 25, 50
         # ypred: b, 65, 25, 50
-        # ytgt: b, 25, 50 values [0-64)
+        # ytgt: b, 65, 25, 50 values [0-64)
         loss = self.loss_fn(ypred, ytgt)
         return loss
+
+class NLLLoss(torch.nn.Module):
+    def __init__(self):
+        super(NLLLoss, self).__init__()
+        self.loss_fn = torch.nn.NLLLoss()
+
+    def forward(self, ypred, ytgt):
+        # ypred: b, 65, 25, 50, onehot
+        # ytgt: b, 65, 25, 50
+        ytgt = torch.argmax(ytgt, dim=1) # b, 25, 50 values [0-64)
+        loss = self.loss_fn(ypred, ytgt)
+        return loss
+
 
 
 class MSEWithReluLoss(torch.nn.Module):
