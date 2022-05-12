@@ -1,9 +1,32 @@
 import torch
-from torch import nn
+from torch import Tensor, nn
 import torch.nn.functional as F
+import numpy as np
 
 from .hdmapnet import HDMapNet
 from .utils import onehot_encoding
+
+def softargmax2d(input: Tensor, beta=100):
+    *_, h, w = input.shape # b, c, h, w
+
+    input = input.reshape(*_, h * w) # b, c, h*w
+    input = F.softmax(beta * input, dim=-1) # b, c, h*w softmax over h*w dim
+
+    indices_c, indices_r = np.meshgrid( # column, row
+        np.linspace(0, 1, w),
+        np.linspace(0, 1, h),
+        indexing='xy'
+    ) # (h, w) col, row mesh grid
+
+    indices_r = torch.tensor(np.reshape(indices_r, (-1, h * w)), device=input.device) # 1, h*w
+    indices_c = torch.tensor(np.reshape(indices_c, (-1, h * w)), device=input.device) # 1, h*w
+
+    result_r = torch.sum((h - 1) * input * indices_r, dim=-1) # b, c
+    result_c = torch.sum((w - 1) * input * indices_c, dim=-1) # b, c
+
+    result = torch.stack([result_r, result_c], dim=-1)
+
+    return result # b, c, 2
 
 def MLP(channels: list, do_bn=True):
     """ MLP """
@@ -48,6 +71,7 @@ class VectorMapNet(nn.Module):
         self.hdmapnet = HDMapNet(data_conf, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+        
         semantic, distance, vertex, embedding, direction = self.hdmapnet(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
         # semantic, embedding, direction are not used
 
@@ -57,18 +81,19 @@ class VectorMapNet(nn.Module):
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
         # onehot = onehot_encoding(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
-        onehot = self.argmax(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
-        onehot_max, _ = onehot.max(1) # b, 25, 50
+        onehot = self.argmax(scores) # b, 65, 25, 50, onehot over axis 64
+        onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
+        onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
         vertices_cell = [torch.nonzero(vc) for vc in onehot_max] # list of length b, [N, 2(row, col)] tensor
         scores = scores[:, :-1] # b, 64, 25, 50
         b, _, h, w = scores.shape # b, 64, 25, 50
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        onehot = onehot.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        onehot = onehot.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
 
         # Extract vertices
-        vertices = [torch.nonzero(v) for v in onehot] # list of length b, [N, 2(row, col)] tensor
+        vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
         scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
 
         # Discard vertices near the image borders
@@ -79,11 +104,12 @@ class VectorMapNet(nn.Module):
 
         # Convert (h, w) to (x, y), normalized
         # v: [N, 2]
-        vertices = [self.normalize_vertices(torch.flip(v, [1]).float(), onehot.shape) for v in vertices] # list of [N, 2] tensor
+        vertices = [self.normalize_vertices(torch.flip(v, [1]).float(), onehot_nodust.shape) for v in vertices] # list of [N, 2] tensor
 
         # Positional embedding (x, y, c)
-        pos_embedding = [torch.cat((v, torch.unsqueeze(s, 1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
+        pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
         # pos_embedding = torch.stack(pos_embedding) # b, N, 3
+
         # Extract distance transform
         dt_embedding = self.sample_dt(vertices_cell, distance, self.cell_size) # list of [N, 64] tensor
         # dt_embedding = torch.stack(dt_embedding) # b, N, 64
@@ -91,7 +117,7 @@ class VectorMapNet(nn.Module):
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
 
-        return semantic, distance, vertex, embedding, direction
+        return semantic, distance, vertex, embedding, direction # onehot: vertex
 
     def remove_borders(self, vertices, scores, border: int, height: int, width: int):
         """ Removes vertices too close to the border """
@@ -100,7 +126,7 @@ class VectorMapNet(nn.Module):
         mask = mask_h & mask_w
         return vertices[mask], scores[mask]
 
-    def sample_dt(self, vertices, distance: torch.Tensor, s: int = 8):
+    def sample_dt(self, vertices, distance: Tensor, s: int = 8):
         """ Extract distance transform patches around vertices """
         # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
         # distance: (b, 3, 200, 400) tensor
