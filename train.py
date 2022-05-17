@@ -231,11 +231,11 @@ if __name__ == '__main__':
     parser.add_argument("--scale_vt", type=float, default=1.0)
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false')
+    parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
-    parser.add_argument("--vertex_pred", action='store_false')
+    parser.add_argument("--vertex_pred", action='store_true')
     parser.add_argument("--cell_size", type=int, default=8)
 
     args = parser.parse_args()
