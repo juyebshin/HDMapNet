@@ -68,31 +68,31 @@ def vis_label(dataroot, version, xbound, ybound):
         plt.savefig(map_path, bbox_inches='tight', dpi=400)
         plt.close()
 
-        # for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
-        #     img = denormalize_img(img)
-        #     P = get_proj_mat(intrin, rot, tran)
-        #     plt.figure(figsize=(9, 16))
-        #     fig = plt.imshow(img)
-        #     fig.axes.get_xaxis().set_visible(False)
-        #     fig.axes.get_yaxis().set_visible(False)
-        #     plt.xlim(1600, 0)
-        #     plt.ylim(900, 0)
-        #     plt.axis('off')
-        #     for vector in vectors:
-        #         pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-        #         pts = pts[:pts_num]
-        #         zeros = np.zeros((pts_num, 1))
-        #         ones = np.ones((pts_num, 1))
-        #         world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
-        #         pix_coords = perspective(world_coords, P)
-        #         x = np.array([pts[0] for pts in pix_coords])
-        #         y = np.array([pts[1] for pts in pix_coords])
-        #         plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy',
-        #                 angles='xy', scale=1, color=colors_plt[line_type])
+        for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
+            img = denormalize_img(img)
+            # P = get_proj_mat(intrin, rot, tran)
+            plt.figure(figsize=(9, 16))
+            fig = plt.imshow(img)
+            fig.axes.get_xaxis().set_visible(False)
+            fig.axes.get_yaxis().set_visible(False)
+            plt.xlim(1600, 0)
+            plt.ylim(900, 0)
+            plt.axis('off')
+            # for vector in vectors:
+            #     pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+            #     pts = pts[:pts_num]
+            #     zeros = np.zeros((pts_num, 1))
+            #     ones = np.ones((pts_num, 1))
+            #     world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
+            #     pix_coords = perspective(world_coords, P)
+            #     x = np.array([pts[0] for pts in pix_coords])
+            #     y = np.array([pts[1] for pts in pix_coords])
+            #     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy',
+            #             angles='xy', scale=1, color=colors_plt[line_type])
 
-        #     cam_path = os.path.join(base_path, f'{cam}.png')
-        #     plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
-        #     plt.close()
+            cam_path = os.path.join(base_path, f'{cam}.png')
+            plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
+            plt.close()
     
     with open('num_vectors_train.csv', 'w') as f:
         print('saving number of vectors list to csv...')
