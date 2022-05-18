@@ -43,6 +43,41 @@ def MLP(channels: list, do_bn=True):
     
     return nn.Sequential(*layers)
 
+def remove_borders(vertices, scores, border: int, height: int, width: int):
+        """ Removes vertices too close to the border """
+        mask_h = (vertices[:, 0] >= border) & (vertices[:, 0] < (height - border))
+        mask_w = (vertices[:, 1] >= border) & (vertices[:, 1] < (width - border))
+        mask = mask_h & mask_w
+        return vertices[mask], scores[mask]
+
+def sample_dt(vertices, distance: Tensor, threshold: int, s: int = 8):
+    """ Extract distance transform patches around vertices """
+    # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
+    # distance: (b, 3, 200, 400) tensor
+    embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
+    embedding = embedding / threshold # 0 ~ 10 -> 0 ~ 1 normalize
+    b, h, w = embedding.shape # b, 200, 400
+    hc, wc = int(h/s), int(w/s) # 25, 50
+    embedding = embedding.reshape(b, hc, s, wc, s).permute(0, 1, 3, 2, 4) # b, 25, 8, 50, 8 -> b, 25, 50, 8, 8
+    embedding = embedding.reshape(b, hc, wc, s*s) # b, 25, 50, 64
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 64] tensor
+    return embedding
+
+def normalize_vertices(vertices: torch.Tensor, image_shape):
+    """ Normalize vertices locations in BEV space """
+    # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
+    _, height, width = image_shape # b, h, w
+    one = vertices.new_tensor(1) # 1
+    size = torch.stack([one*width, one*height])[None] # 1, 2
+    center = size / 2 # 1, 2
+    return (vertices - center) / center # N, 2
+
+def top_k_vertices(vertices: torch.Tensor, scores: torch.Tensor, k: int):
+    if k >= len(vertices):
+        return vertices, scores
+    scores, indices = torch.topk(scores, k, dim=0)
+    return vertices[indices], scores
+
 class ArgMax(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, dim=1):
@@ -98,52 +133,23 @@ class VectorMapNet(nn.Module):
 
         # Discard vertices near the image borders
         vertices, scores = list(zip(*[
-            self.remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
+            remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
             for v, s in zip(vertices, scores)
         ])) # tuple
 
         # Convert (h, w) to (x, y), normalized
         # v: [N, 2]
-        vertices = [self.normalize_vertices(torch.flip(v, [1]).float(), onehot_nodust.shape) for v in vertices] # list of [N, 2] tensor
+        vertices = [normalize_vertices(torch.flip(v, [1]).float(), onehot_nodust.shape) for v in vertices] # list of [N, 2] tensor
 
         # Positional embedding (x, y, c)
         pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
         # pos_embedding = torch.stack(pos_embedding) # b, N, 3
 
         # Extract distance transform
-        dt_embedding = self.sample_dt(vertices_cell, distance, self.cell_size) # list of [N, 64] tensor
+        dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
         # dt_embedding = torch.stack(dt_embedding) # b, N, 64
 
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
 
         return semantic, distance, vertex, embedding, direction
-
-    def remove_borders(self, vertices, scores, border: int, height: int, width: int):
-        """ Removes vertices too close to the border """
-        mask_h = (vertices[:, 0] >= border) & (vertices[:, 0] < (height - border))
-        mask_w = (vertices[:, 1] >= border) & (vertices[:, 1] < (width - border))
-        mask = mask_h & mask_w
-        return vertices[mask], scores[mask]
-
-    def sample_dt(self, vertices, distance: Tensor, s: int = 8):
-        """ Extract distance transform patches around vertices """
-        # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
-        # distance: (b, 3, 200, 400) tensor
-        embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
-        embedding = embedding / self.dist_threshold # 0 ~ 10 -> 0 ~ 1 normalize
-        b, h, w = embedding.shape # b, 200, 400
-        hc, wc = int(h/s), int(w/s) # 25, 50
-        embedding = embedding.reshape(b, hc, s, wc, s).permute(0, 1, 3, 2, 4) # b, 25, 8, 50, 8 -> b, 25, 50, 8, 8
-        embedding = embedding.reshape(b, hc, wc, s*s) # b, 25, 50, 64
-        embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 64] tensor
-        return embedding
-
-    def normalize_vertices(self, vtcs: torch.Tensor, image_shape):
-        """ Normalize vertices locations in BEV space """
-        # vtcs: [N, 2] tensor in (x, y): (0~399, 0~199)
-        _, height, width = image_shape # b, h, w
-        one = vtcs.new_tensor(1) # 1
-        size = torch.stack([one*width, one*height])[None] # 1, 2
-        center = size / 2 # 1, 2
-        return (vtcs - center) / center # N, 2
