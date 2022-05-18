@@ -73,10 +73,24 @@ def normalize_vertices(vertices: torch.Tensor, image_shape):
     return (vertices - center) / center # N, 2
 
 def top_k_vertices(vertices: torch.Tensor, scores: torch.Tensor, k: int):
-    if k >= len(vertices):
-        return vertices, scores
+    """Returns top-K vertices.
+
+    vertices: [N, 2] tensor (N vertices in xy)
+    scores: [N] tensor (N vertex scores)
+    """
+    # k: 300
+    n_vertices = len(vertices) # N
+    if k >= n_vertices:
+        pad_size = k - n_vertices # k - N
+        pad_v = torch.zeros([pad_size, 2])
+        pad_s = torch.zeros([pad_size])
+        vertices, scores = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0)
+        mask = torch.zeros([k], dtype=torch.uint8)
+        mask[:n_vertices] = 1
+        return vertices, scores, mask # [K, 2], [K], [K]
     scores, indices = torch.topk(scores, k, dim=0)
-    return vertices[indices], scores
+    mask = torch.ones([k]) # [K]
+    return vertices[indices], scores, mask # [K, 2], [K], [K]
 
 class ArgMax(torch.autograd.Function):
     @staticmethod
@@ -92,7 +106,7 @@ class ArgMax(torch.autograd.Function):
         return grad_output
 
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True) -> None:
+    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True, max_vertices=300) -> None:
         super(VectorMapNet, self).__init__()
 
         self.cell_size = data_conf['cell_size']
@@ -100,6 +114,7 @@ class VectorMapNet(nn.Module):
         self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
+        self.max_vertices = max_vertices
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
         self.argmax = ArgMax.apply
@@ -137,17 +152,23 @@ class VectorMapNet(nn.Module):
             for v, s in zip(vertices, scores)
         ])) # tuple
 
+        if self.max_vertices >= 0:
+            vertices, scores, masks = list(zip(*[
+                top_k_vertices(v, s, self.max_vertices)
+                for v, s in zip(vertices, scores)
+            ]))
+
         # Convert (h, w) to (x, y), normalized
         # v: [N, 2]
         vertices = [normalize_vertices(torch.flip(v, [1]).float(), onehot_nodust.shape) for v in vertices] # list of [N, 2] tensor
 
         # Positional embedding (x, y, c)
         pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
-        # pos_embedding = torch.stack(pos_embedding) # b, N, 3
+        pos_embedding = torch.stack(pos_embedding) # b, N, 3
 
         # Extract distance transform
         dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
-        # dt_embedding = torch.stack(dt_embedding) # b, N, 64
+        dt_embedding = torch.stack(dt_embedding) # b, N, 64
 
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
