@@ -117,7 +117,7 @@ class VectorMapNet(nn.Module):
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
 
-        return semantic, distance, vertex, embedding, direction # onehot: vertex
+        return semantic, distance, vertex, embedding, direction
 
     def remove_borders(self, vertices, scores, border: int, height: int, width: int):
         """ Removes vertices too close to the border """

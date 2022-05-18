@@ -65,7 +65,7 @@ def vis_label(dataroot, version, xbound, ybound):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'MAP.png')
-        # plt.savefig(map_path, bbox_inches='tight', dpi=400)
+        plt.savefig(map_path, bbox_inches='tight', dpi=400)
         plt.close()
 
         # for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
