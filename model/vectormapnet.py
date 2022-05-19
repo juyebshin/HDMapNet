@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
@@ -63,7 +64,7 @@ def sample_dt(vertices, distance: Tensor, threshold: int, s: int = 8):
     embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 64] tensor
     return embedding
 
-def normalize_vertices(vertices: torch.Tensor, image_shape):
+def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
     # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
     _, height, width = image_shape # b, h, w
@@ -72,25 +73,29 @@ def normalize_vertices(vertices: torch.Tensor, image_shape):
     center = size / 2 # 1, 2
     return (vertices - center) / center # N, 2
 
-def top_k_vertices(vertices: torch.Tensor, scores: torch.Tensor, k: int):
-    """Returns top-K vertices.
+def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
+    """
+    Returns top-K vertices.
 
     vertices: [N, 2] tensor (N vertices in xy)
     scores: [N] tensor (N vertex scores)
+    embeddings: [N, 64] tensor
     """
     # k: 300
     n_vertices = len(vertices) # N
+    embedding_dim = embeddings.shape[1]
     if k >= n_vertices:
         pad_size = k - n_vertices # k - N
-        pad_v = torch.zeros([pad_size, 2])
-        pad_s = torch.zeros([pad_size])
-        vertices, scores = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0)
-        mask = torch.zeros([k], dtype=torch.uint8)
+        pad_v = torch.zeros([pad_size, 2], device=vertices.device)
+        pad_s = torch.zeros([pad_size], device=scores.device)
+        pad_dt = torch.zeros([pad_size, embedding_dim], device=embeddings.device)
+        vertices, scores, embeddings = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0), torch.cat([embeddings, pad_dt], dim=0)
+        mask = torch.zeros([k], dtype=torch.uint8, device=vertices.device)
         mask[:n_vertices] = 1
-        return vertices, scores, mask # [K, 2], [K], [K]
+        return vertices, scores, embeddings, mask # [K, 2], [K], [K]
     scores, indices = torch.topk(scores, k, dim=0)
-    mask = torch.ones([k]) # [K]
-    return vertices[indices], scores, mask # [K, 2], [K], [K]
+    mask = torch.ones([k], dtype=torch.uint8, device=vertices.device) # [K]
+    return vertices[indices], scores, embeddings[indices], mask # [K, 2], [K], [K]
 
 class ArgMax(torch.autograd.Function):
     @staticmethod
@@ -105,8 +110,23 @@ class ArgMax(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output
 
+class GraphEncoder(nn.Module):
+    """ Joint encoding of vertices and distance transform embeddings """
+    def __init__(self, feature_dim, layers: list) -> None:
+        super().__init__()
+        # first element of layers should be either 3 (for vertices) or 64 (for dt embeddings)
+        self.encoder = MLP(layers + [feature_dim])
+        nn.init.constant_(self.encoder[-1].bias, 0.0)
+    
+    def forward(self, embedding: torch.Tensor):
+        """ vertices: [b, N, 3] vertices coordinates with score confidence (x y c)
+            distance: [b, N, 64]
+        """
+        input = embedding.transpose(1, 2) # [b, C, N] C = 3 for vertices, C = 64 for dt
+        return self.encoder(input) # [b, 256, N]
+
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True, max_vertices=300) -> None:
+    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True, max_vertices=300, feature_dim=256) -> None:
         super(VectorMapNet, self).__init__()
 
         self.cell_size = data_conf['cell_size']
@@ -118,15 +138,19 @@ class VectorMapNet(nn.Module):
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
         self.argmax = ArgMax.apply
+
+        self.venc = GraphEncoder(feature_dim, [3, 32, 64, 128, 256]) # 3 -> 256
+        self.dtenc = GraphEncoder(feature_dim, [self.cell_size*self.cell_size, 64, 128, 256]) # 64 -> 256
         self.hdmapnet = HDMapNet(data_conf, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+        """ semantic, embedding, direction are not used
+
+        @ vertex: (b, 65, 25, 50)
+        @ distance: (b, 3, 200, 500)
+        """
         
         semantic, distance, vertex, embedding, direction = self.hdmapnet(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
-        # semantic, embedding, direction are not used
-
-        # vertex: (b, 65, 25, 50)
-        # distance: (b, 3, 200, 500)
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
@@ -145,17 +169,19 @@ class VectorMapNet(nn.Module):
         # Extract vertices
         vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
         scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+        # Extract distance transform
+        dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
 
         # Discard vertices near the image borders
-        vertices, scores = list(zip(*[
-            remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
-            for v, s in zip(vertices, scores)
-        ])) # tuple
+        # vertices, scores = list(zip(*[
+        #     remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
+        #     for v, s in zip(vertices, scores)
+        # ])) # tuple
 
         if self.max_vertices >= 0:
-            vertices, scores, masks = list(zip(*[
-                top_k_vertices(v, s, self.max_vertices)
-                for v, s in zip(vertices, scores)
+            vertices, scores, dt_embedding, masks = list(zip(*[
+                top_k_vertices(v, s, d, self.max_vertices)
+                for v, s, d in zip(vertices, scores, dt_embedding)
             ]))
 
         # Convert (h, w) to (x, y), normalized
@@ -166,9 +192,9 @@ class VectorMapNet(nn.Module):
         pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
         pos_embedding = torch.stack(pos_embedding) # b, N, 3
 
-        # Extract distance transform
-        dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
         dt_embedding = torch.stack(dt_embedding) # b, N, 64
+
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # b, 256, N
 
         # vertices: N, 2 in XY vehicle space
         # scores: N vertex confidences
