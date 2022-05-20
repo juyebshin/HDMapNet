@@ -1,4 +1,5 @@
 from turtle import forward
+from copy import deepcopy
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
@@ -68,9 +69,9 @@ def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
     # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
     _, height, width = image_shape # b, h, w
-    one = vertices.new_tensor(1) # 1
-    size = torch.stack([one*width, one*height])[None] # 1, 2
-    center = size / 2 # 1, 2
+    one = vertices.new_tensor(1) # [1], data 1
+    size = torch.stack([one*width, one*height])[None] # [1, 2], data [400, 200]
+    center = size / 2 # [1, 2], data [200, 100]
     return (vertices - center) / center # N, 2
 
 def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
@@ -97,6 +98,16 @@ def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int)
     mask = torch.ones([k], dtype=torch.uint8, device=vertices.device) # [K]
     return vertices[indices], scores, embeddings[indices], mask # [K, 2], [K], [K]
 
+def attention(query, key, value, mask=None):
+    # q, k, v: [b, 64, 4, N], mask: [b, 1, N]
+    dim = query.shape[1] # 64
+    scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim**.5 # [b, 4, N, N], dim**.5 == 8
+    if mask is not None:
+        mask = torch.einsum('bdn,bdm->bdnm', mask, mask) # [b, 1, N, N]
+        scores = scores.masked_fill(mask == 0, -1e9)
+    prob = torch.nn.functional.softmax(scores, dim=-1) # [b, 4, N, N]
+    return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob # final message passing [b, 64, 4, N]
+
 class ArgMax(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, dim=1):
@@ -109,6 +120,60 @@ class ArgMax(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output
+
+class MultiHeadedAttention(nn.Module):
+    """ Multi-head attention to increase model expressivitiy """
+    def __init__(self, num_heads: int, d_model: int):
+        super().__init__()
+        assert d_model % num_heads == 0
+        self.dim = d_model // num_heads # 64
+        self.num_heads = num_heads # 4
+        self.merge = nn.Conv1d(d_model, d_model, kernel_size=1)
+        self.proj = nn.ModuleList([deepcopy(self.merge) for _ in range(3)])
+
+    def forward(self, query, key, value, mask=None):
+        # q, k, v: [b, 256, N], mask: [b, 1, N]
+        batch_dim = query.size(0) # b
+        num_vertices = query.size(2) # N
+        if mask is None:
+            mask = torch.ones([batch_dim, 1, num_vertices], device=query.device) # [b, 1, N]
+        query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
+                             for l, x in zip(self.proj, (query, key, value))]
+        # q, k, v: [b, 64, 4, N]
+        x, _ = attention(query, key, value, mask) # [b, 64, 4, N]
+        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1))
+
+class AttentionalPropagation(nn.Module):
+    def __init__(self, feature_dim: int, num_heads: int):
+        super().__init__()
+        self.attn = MultiHeadedAttention(num_heads, feature_dim)
+        self.mlp = MLP([feature_dim*2, feature_dim*2, feature_dim])
+        nn.init.constant_(self.mlp[-1].bias, 0.0)
+
+    def forward(self, x, source, mask=None):
+        # attn(q, k, v)
+        message = self.attn(x, source, source, mask) # [b, 256, N]
+        return self.mlp(torch.cat([x, message], dim=1))
+
+class AttentionalGNN(nn.Module):
+    def __init__(self, feature_dim: int, layer_names: list):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            AttentionalPropagation(feature_dim, 4)
+            for _ in range(len(layer_names))])
+        self.names = layer_names
+
+    def forward(self, embedding, mask=None):
+        # Only self-attention is implemented for now
+        # embedding: [b, 256, N]
+        for layer, name in zip(self.layers, self.names):
+            # if name == 'cross':
+            #     src0, src1 = desc1, desc0
+            # else:  # if name == 'self':
+            #     src0, src1 = desc0, desc1
+            delta = layer(embedding, embedding, mask) # [b, 256, N]
+            embedding = (embedding + delta) # [b, 256, N]
+        return embedding
 
 class GraphEncoder(nn.Module):
     """ Joint encoding of vertices and distance transform embeddings """
@@ -126,7 +191,7 @@ class GraphEncoder(nn.Module):
         return self.encoder(input) # [b, 256, N]
 
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True, max_vertices=300, feature_dim=256) -> None:
+    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True, max_vertices=300, feature_dim=256, gnn_layers: list = ['self']*9) -> None:
         super(VectorMapNet, self).__init__()
 
         self.cell_size = data_conf['cell_size']
@@ -135,13 +200,19 @@ class VectorMapNet(nn.Module):
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
         self.max_vertices = max_vertices
+        # self.GNN_layers = gnn_layers
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
         self.argmax = ArgMax.apply
 
+        # Intermediate representations: vertices, distance transform
+        self.bev_backbone = HDMapNet(data_conf, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred)
+
+        # Graph neural network
         self.venc = GraphEncoder(feature_dim, [3, 32, 64, 128, 256]) # 3 -> 256
         self.dtenc = GraphEncoder(feature_dim, [self.cell_size*self.cell_size, 64, 128, 256]) # 64 -> 256
-        self.hdmapnet = HDMapNet(data_conf, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred)
+        self.gnn = AttentionalGNN(feature_dim, gnn_layers)
+        self.final_proj = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, embedding, direction are not used
@@ -150,7 +221,7 @@ class VectorMapNet(nn.Module):
         @ distance: (b, 3, 200, 500)
         """
         
-        semantic, distance, vertex, embedding, direction = self.hdmapnet(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
+        semantic, distance, vertex, embedding, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
@@ -167,6 +238,8 @@ class VectorMapNet(nn.Module):
         onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
 
         # Extract vertices
+        # vertices: [N, 2] in XY vehicle space
+        # scores: [N] vertex confidences
         vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
         scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
         # Extract distance transform
@@ -190,13 +263,16 @@ class VectorMapNet(nn.Module):
 
         # Positional embedding (x, y, c)
         pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
-        pos_embedding = torch.stack(pos_embedding) # b, N, 3
+        pos_embedding = torch.stack(pos_embedding) # [b, N, 3]
 
-        dt_embedding = torch.stack(dt_embedding) # b, N, 64
+        dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
+        masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # b, 256, N
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
+        masks = masks.transpose(1, 2) # [b, 1, N]
+        graph_embedding = self.gnn(graph_embedding, masks) # [b, 256, N]
+        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
-        # vertices: N, 2 in XY vehicle space
-        # scores: N vertex confidences
+
 
         return semantic, distance, vertex, embedding, direction
