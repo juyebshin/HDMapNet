@@ -108,6 +108,8 @@ def attention(query, key, value, mask=None):
     prob = torch.nn.functional.softmax(scores, dim=-1) # [b, 4, N, N]
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob # final message passing [b, 64, 4, N]
 
+
+
 class ArgMax(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, dim=1):
@@ -200,6 +202,7 @@ class VectorMapNet(nn.Module):
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
         self.max_vertices = max_vertices
+        self.feature_dim = feature_dim
         # self.GNN_layers = gnn_layers
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
@@ -213,6 +216,9 @@ class VectorMapNet(nn.Module):
         self.dtenc = GraphEncoder(feature_dim, [self.cell_size*self.cell_size, 64, 128, 256]) # 64 -> 256
         self.gnn = AttentionalGNN(feature_dim, gnn_layers)
         self.final_proj = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
+
+        bin_score = nn.Parameter(torch.tensor(1.))
+        self.register_parameter('bin_score', bin_score)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, embedding, direction are not used
@@ -272,6 +278,10 @@ class VectorMapNet(nn.Module):
         masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding = self.gnn(graph_embedding, masks) # [b, 256, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
+
+        # Adjacency matrix score
+        scores = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
+        scores = scores / self.feature_dim**.5
 
 
 
