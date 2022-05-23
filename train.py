@@ -22,8 +22,8 @@ from evaluate import onehot_encoding, eval_iou, visualize
 def write_log(writer, ious, title, counter):
     writer.add_scalar(f'{title}/iou', torch.mean(ious[1:]), counter)
 
-    for i, iou in enumerate(ious):
-        writer.add_scalar(f'{title}/class_{i}/iou', iou, counter)
+    # for i, iou in enumerate(ious):
+    #     writer.add_scalar(f'{title}/class_{i}/iou', iou, counter)
 
 
 def train(args):
@@ -54,6 +54,8 @@ def train(args):
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
     }
+
+    # torch.cuda.set_device(args.local_rank)
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.num_vectors)
     model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
@@ -169,7 +171,7 @@ def train(args):
 
         iou = eval_iou(model, val_loader, writer, epoch, 200)
         logger.info(f"EVAL[{epoch:>2d}]:    "
-                    f"IOU: {np.array2string(iou[1:].numpy(), precision=3, floatmode='fixed')}")
+                    f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}")
 
         write_log(writer, iou, 'eval', epoch)
         # do not save this to save memory
@@ -210,6 +212,7 @@ if __name__ == '__main__':
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
+    parser.add_argument("--local_rank", type=int, default=0)
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')

@@ -246,7 +246,7 @@ def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, num_samples=3
     val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False, num_samples=num_samples)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True, num_workers=nworkers, drop_last=True, collate_fn=collate_vectors)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers, collate_fn=collate_vectors)
     return train_loader, val_loader
 
 def collate_vectors(batch):
