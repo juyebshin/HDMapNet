@@ -86,7 +86,7 @@ class CamEncode(nn.Module):
 
 
 class BevEncode(nn.Module):
-    def __init__(self, inC, outC, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
+    def __init__(self, inC, outC, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
         super(BevEncode, self).__init__()
         trunk = resnet18(pretrained=False, zero_init_residual=True)
         self.conv1 = nn.Conv2d(inC, 64, kernel_size=7, stride=2, padding=3,
@@ -99,6 +99,8 @@ class BevEncode(nn.Module):
         self.layer3 = trunk.layer3
 
         self.up1 = Up(64 + 256, 256, scale_factor=4)
+
+        self.segmentation = segmentation
         self.up2 = nn.Sequential( # final semantic segmentation prediction
             nn.Upsample(scale_factor=2, mode='bilinear',
                         align_corners=True),
@@ -189,10 +191,16 @@ class BevEncode(nn.Module):
             x_dt = self.up_dt(x) # b, 3, 200, 400
             # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
             # concat [x, x_dt] and upsample to get dense semantic prediction
-            x = self.up3(x, self.relu(x_dt)) # b, 4, 200, 400
+            if self.segmentation:
+                x_seg = self.up3(x, self.relu(x_dt)) # b, 4, 200, 400
+            else:
+                x_seg = None
         else:
             x_dt = None
-            x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
+            if self.segmentation:
+                x_seg = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
+            else:
+                x_seg = None
         # x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
         
         if self.instance_seg:
@@ -207,4 +215,4 @@ class BevEncode(nn.Module):
         else:
             x_direction = None
 
-        return x, x_dt, x_vertex, x_embedded, x_direction
+        return x_seg, x_dt, x_vertex, x_embedded, x_direction

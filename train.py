@@ -10,7 +10,7 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss
 
-from data.dataset import semantic_dataset
+from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from data.utils import label_onehot_decoding
 from evaluation.iou import get_batch_iou
@@ -50,10 +50,13 @@ def train(args):
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
         'cell_size': args.cell_size, # 8
+        'num_vectors': args.num_vectors, # 100
+        'feature_dim': args.feature_dim, # 256
+        'gnn_layers': args.gnn_layers, # ['self']*7
     }
 
-    train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
+    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.num_vectors)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
 
     if args.finetune:
         model.load_state_dict(torch.load(args.modelf), strict=False)
@@ -80,7 +83,8 @@ def train(args):
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
-                     yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt) in enumerate(train_loader):
+                     yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(train_loader):
+            # vectors_gt: list of dict {'pts': array, 'pts_num': int, 'type': int}, each element of list is one instance of vectors
             t0 = time()
             opt.zero_grad()
 
@@ -92,7 +96,14 @@ def train(args):
             instance_gt = instance_gt.cuda()
             distance_gt = distance_gt.cuda()
             vertex_gt = vertex_gt.cuda().float()
-            seg_loss = loss_fn(semantic, semantic_gt)
+
+            vt_loss = vt_loss_fn(vertex, vertex_gt)
+            
+            if args.segmentation:
+                seg_loss = loss_fn(semantic, semantic_gt)
+            else:
+                seg_loss = 0
+
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
             else:
@@ -115,11 +126,11 @@ def train(args):
             else:
                 dt_loss = 0
             
-            if args.vertex_pred:
-                # vertex_gt: b, 65, h, w
-                vt_loss = vt_loss_fn(vertex, vertex_gt)
-            else:
-                vt_loss = 0
+            # if args.vertex_pred:
+            #     # vertex_gt: b, 65, h, w
+            #     vt_loss = vt_loss_fn(vertex, vertex_gt)
+            # else:
+            #     vt_loss = 0
 
             final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt
             final_loss.backward()
@@ -129,12 +140,13 @@ def train(args):
             t1 = time()
 
             if counter % 10 == 0:
-                intersects, union = get_batch_iou(onehot_encoding(semantic), semantic_gt)
+                heatmap = vertex.softmax(1)
+                intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
                 iou = intersects / (union + 1e-7)
                 logger.info(f"TRAIN[{epoch:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
-                            f"IOU: {np.array2string(iou[1:].numpy(), precision=3, floatmode='fixed')}")
+                            f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}")
 
                 write_log(writer, iou, 'train', counter)
                 writer.add_scalar('train/step_time', t1 - t0, counter)
@@ -151,8 +163,7 @@ def train(args):
             if counter % 200 == 0:
                 distance = distance.relu().clamp(max=args.dist_threshold)
                 heatmap = vertex.softmax(1)
-                heatmap_onehot = onehot_encoding(heatmap) # b, 65, 25, 50
-                visualize(writer, 'train', imgs, distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, counter)
+                visualize(writer, 'train', imgs, distance_gt, vertex_gt, distance, heatmap, counter)
                 
             counter += 1
 
@@ -165,7 +176,7 @@ def train(args):
         # model_name = os.path.join(args.logdir, f"model{epoch}.pt")
         # torch.save(model.state_dict(), model_name)
         # logger.info(f"{model_name} saved")
-        mean_iou = float(torch.mean(iou[1:]))
+        mean_iou = float(torch.mean(iou[:-1])) # mean excluding dustbin
 
         # save best checkpoint
         if mean_iou > best_iou:
@@ -234,9 +245,17 @@ if __name__ == '__main__':
     parser.add_argument("--distance_reg", action='store_false')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
-    # vertex location classification config
+    # vertex location classification config, always true for VectorMapNet
     parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+
+    # semantic segmentation config
+    parser.add_argument("--segmentation", action='store_true')
+
+    # VectorMapNet config
+    parser.add_argument("--num_vectors", type=int, default=100) # 100 * 3 classes = 300 in total
+    parser.add_argument("--feature_dim", type=int, default=256)
+    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
 
     args = parser.parse_args()
     train(args)

@@ -41,7 +41,7 @@ class ViewTransformation(nn.Module):
 
 
 class HDMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True):
+    def __init__(self, data_conf, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True):
         super(HDMapNet, self).__init__()
         self.camC = 64 # feature channel?
         self.downsample = 16
@@ -69,9 +69,9 @@ class HDMapNet(nn.Module):
         self.lidar = lidar
         if lidar:
             self.pp = PointPillarEncoder(128, data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
-            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
         else:
-            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
 
     def get_Ks_RTs_and_post_RTs(self, intrins, rots, trans, post_rots, post_trans):
         B, N, _, _ = intrins.shape

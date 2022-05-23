@@ -7,7 +7,8 @@ from pyquaternion import Quaternion
 from nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data._utils.collate import default_collate
 from data.rasterize import preprocess_map
 from .const import CAMS, NUM_CLASSES, IMG_ORIGIN_H, IMG_ORIGIN_W
 from .vector_map import VectorizedLocalMap
@@ -18,10 +19,10 @@ from model.voxel import pad_or_trim_to_np
 
 
 class HDMapNetDataset(Dataset):
-    def __init__(self, version, dataroot, data_conf, is_train):
+    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False):
         super(HDMapNetDataset, self).__init__()
-        patch_h = data_conf['ybound'][1] - data_conf['ybound'][0]
-        patch_w = data_conf['xbound'][1] - data_conf['xbound'][0]
+        patch_h = data_conf['ybound'][1] - data_conf['ybound'][0] # 30.0
+        patch_w = data_conf['xbound'][1] - data_conf['xbound'][0] # 60.0
         canvas_h = int(patch_h / data_conf['ybound'][2])
         canvas_w = int(patch_w / data_conf['xbound'][2])
         self.is_train = is_train
@@ -29,7 +30,7 @@ class HDMapNetDataset(Dataset):
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
         self.nusc = NuScenes(version=version, dataroot=dataroot)
-        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size)
+        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size, num_samples=num_samples, padding=padding)
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
 
@@ -214,6 +215,53 @@ def semantic_dataset(version, dataroot, data_conf, bsz, nworkers):
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
     return train_loader, val_loader
 
+class VectorMapNetDataset(HDMapNetDataset):
+    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False):
+        super(VectorMapNetDataset, self).__init__(version, dataroot, data_conf, is_train, num_samples, padding)
+        self.thickness = data_conf['thickness']
+        self.angle_class = data_conf['angle_class']
+        self.dist_threshold = data_conf['dist_threshold']
+        self.cell_size = data_conf['cell_size']
+
+    def get_vector_map(self, rec):
+        vectors = self.get_vectors(rec)
+        instance_masks, _, _, distance_masks, vertex_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
+        semantic_masks = instance_masks != 0
+        semantic_masks = torch.cat([(~torch.any(semantic_masks, axis=0)).unsqueeze(0), semantic_masks])
+        instance_masks = instance_masks.sum(0)
+        # obtain normalized DT [0.0, 1.0], truncated by 10
+        distance_masks = get_distance_transform(distance_masks, self.dist_threshold)
+        return semantic_masks, instance_masks, torch.tensor(distance_masks, dtype=torch.float32), vertex_masks.type(torch.bool), vectors
+        
+    def __getitem__(self, idx):
+        rec = self.samples[idx]
+        imgs, trans, rots, intrins, post_trans, post_rots = self.get_imgs(rec)
+        lidar_data, lidar_mask = self.get_lidar(rec)
+        car_trans, yaw_pitch_roll = self.get_ego_pose(rec)
+        semantic_masks, instance_masks, distance_masks, vertex_masks, vectors = self.get_vector_map(rec)
+        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, vectors
+    
+def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, num_samples=300):
+    train_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=True, num_samples=num_samples)
+    val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False, num_samples=num_samples)
+
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True, num_workers=nworkers, drop_last=True, collate_fn=collate_vectors)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
+    return train_loader, val_loader
+
+def collate_vectors(batch):
+    vectors_list = []
+    batch_list = []
+    # batch: list of 'batch_size' tuple elements
+    for *_, vectors in batch:
+        # vectors: list of dict
+        vectors_list.append(vectors)
+        batch_list.append(tuple(_))
+    
+    batch = default_collate(batch_list)
+    # vectors_list: 'batch_size' list of list of dict
+    # batch: list
+    return tuple([*batch, vectors_list])
 
 if __name__ == '__main__':
     data_conf = {
@@ -227,4 +275,3 @@ if __name__ == '__main__':
     dataset = HDMapNetSemanticDataset(version='v1.0-mini', dataroot='dataset/nuScenes', data_conf=data_conf, is_train=False)
     for idx in range(dataset.__len__()):
         imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, direction_mask = dataset.__getitem__(idx)
-

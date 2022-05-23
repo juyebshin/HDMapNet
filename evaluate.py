@@ -6,7 +6,7 @@ import numpy as np
 import torchvision
 from tensorboardX import SummaryWriter
 
-from data.dataset import semantic_dataset
+from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou
 from model import get_model
@@ -21,7 +21,7 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, dt: torch.Tensor, heatmap: torch.Tensor, vertex: torch.Tensor, step: int):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, dt: torch.Tensor, heatmap: torch.Tensor, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
@@ -30,41 +30,46 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     imgs = torch.index_select(imgs, 0, torch.LongTensor([0, 1, 2, 5, 4, 3]))
     imgs_grid = torchvision.utils.make_grid(imgs, nrow=3) # 3, 262, 1064
     imgs_grid = np.array(denormalize_img(imgs_grid)) # 262, 1064, 3
-
-    dt_mask = dt_mask.detach().cpu().float().numpy()
-    vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
-    dt = dt.detach().cpu().float().numpy()
-    heatmap = heatmap.detach().cpu().float().numpy()[0] # 65, 25, 50
-    vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
-
-    nodust_gt = vt_mask[:-1, :, :] # 64, 25, 50
-    Hc, Wc = vt_mask.shape[1:] # 25, 50
-    nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
-    heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
-    heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
-    heatmap_gt = np.reshape(heatmap_gt, [Hc*8, Wc*8]) # 200, 400
-
-    nodust = heatmap[:-1, :, :] # 64, 25, 50
-    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-    heatmap = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
-    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-    heatmap = np.reshape(heatmap, [Hc*8, Wc*8]) # 200, 400
-
-    nodust = vertex[:-1, :, :] # 64, 25, 50
-    nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-    vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
-    vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
-    vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
-
     writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
-    writer.add_image(f'{title}/distance_transform_gt', colorise(dt_mask[0], 'magma'), step, dataformats='NHWC')
-    writer.add_image(f'{title}/distance_transform_pred', colorise(dt[0], 'magma'), step, dataformats='NHWC')
-    writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot', 0.0, 1.0), step, dataformats='HWC')
-    writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
-    writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
-    heatmap[heatmap < 0.015] = 0.0
-    heatmap[heatmap > 0.0] = 1.0
-    writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+
+
+    if dt is not None:
+        dt = dt.detach().cpu().float().numpy()
+        dt_mask = dt_mask.detach().cpu().float().numpy()
+        writer.add_image(f'{title}/distance_transform_gt', colorise(dt_mask[0], 'magma'), step, dataformats='NHWC')
+        writer.add_image(f'{title}/distance_transform_pred', colorise(dt[0], 'magma'), step, dataformats='NHWC')
+    
+    if heatmap is not None:
+        vertex = onehot_encoding(heatmap)
+        heatmap = heatmap.detach().cpu().float().numpy()[0] # 65, 25, 50
+        vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
+        vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
+
+        nodust_gt = vt_mask[:-1, :, :] # 64, 25, 50
+        Hc, Wc = vt_mask.shape[1:] # 25, 50
+        nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
+        heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+        heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
+        heatmap_gt = np.reshape(heatmap_gt, [Hc*8, Wc*8]) # 200, 400
+
+        nodust = heatmap[:-1, :, :] # 64, 25, 50
+        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+        heatmap = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+        heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+        heatmap = np.reshape(heatmap, [Hc*8, Wc*8]) # 200, 400
+
+        nodust = vertex[:-1, :, :] # 64, 25, 50
+        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+        vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+        vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
+        vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
+
+        writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        heatmap[heatmap < 0.015] = 0.0
+        heatmap[heatmap > 0.0] = 1.0
+        writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
 
 
 
@@ -75,15 +80,15 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
     total_intersects = 0
     total_union = 0
     with torch.no_grad():
-        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt in tqdm.tqdm(val_loader):
+        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
             semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
-            semantic = semantic.softmax(1).cuda() # b, 4, 200, 400
-            semantic_gt = semantic_gt.cuda().float() # b, 4, 200, 400
-            intersects, union = get_batch_iou(onehot_encoding(semantic), semantic_gt)
+            heatmap = vertex.softmax(1).cuda() # b, 65, 25, 50
+            vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
+            intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
             total_intersects += intersects
             total_union += union
 
@@ -92,10 +97,9 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
                 
                 distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
                 # distance_gt = distance_gt.cuda() # b, 3, 200, 400
-                heatmap = vertex.softmax(1).cuda() # b, 65, 25, 50
                 heatmap_onehot = onehot_encoding(heatmap)
                 # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                visualize(writer, 'eval', imgs, distance_gt, vertex_gt, distance, heatmap, heatmap_onehot, step)
+                visualize(writer, 'eval', imgs, distance_gt, vertex_gt, distance, heatmap, step)
     return total_intersects / (total_union + 1e-7)
 
 
@@ -113,7 +117,7 @@ def main(args):
         'cell_size': args.cell_size, # 8
     }
 
-    train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
+    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
