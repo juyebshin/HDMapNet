@@ -3,6 +3,7 @@ import tqdm
 
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 import torchvision
 from tensorboardX import SummaryWriter
 
@@ -13,6 +14,7 @@ from model import get_model
 from data.visualize import colorise
 from data.image import denormalize_img
 
+colors_plt = ['r', 'b', 'g']
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -21,7 +23,7 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, dt: torch.Tensor, heatmap: torch.Tensor, step: int):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, patch_size: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
@@ -70,10 +72,38 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         heatmap[heatmap < 0.015] = 0.0
         heatmap[heatmap > 0.0] = 1.0
         writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+    
+    if matches is not None and positions is not None and masks is not None:
+        # matches: [b, N, N]
+        # positions: [b, N, 3], x y c
+        # masks: [b, 300, 1]
+        # vectors_gt: [b] list of [instance] list of dict
+        # patch_size: [30.0, 60.0]
+        matches = matches.detach().cpu().float().numpy()[0] # [N, N]
+        positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
+        masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
+        vectors_gt = vectors_gt[0]
+        positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
+        positions_mask = positions[masks == 1]
+
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+
+        for vector in vectors_gt:
+            pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+            pts = pts[:pts_num]
+            x = np.array([pt[0] for pt in pts])
+            y = np.array([pt[1] for pt in pts])
+            plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+        
+        writer.add_figure(f'{title}/vector_gt', fig, step)
+        plt.close()
 
 
 
-def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
+def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     # st
     model.eval()
     counter = 0
@@ -82,7 +112,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
     with torch.no_grad():
         for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
-            semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -92,14 +122,16 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=None):
             total_intersects += intersects
             total_union += union
 
+            if writer is not None and vis_interval > 0:
+                if counter % vis_interval == 0:                
+                        distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
+                        # distance_gt = distance_gt.cuda() # b, 3, 200, 400
+                        heatmap_onehot = onehot_encoding(heatmap)
+                        # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, distance, heatmap, matches, positions, masks, [30.0, 60.0], step)
+            
             counter += 1
-            if writer is not None and counter % vis_interval == 0:
-                
-                distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
-                # distance_gt = distance_gt.cuda() # b, 3, 200, 400
-                heatmap_onehot = onehot_encoding(heatmap)
-                # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                visualize(writer, 'eval', imgs, distance_gt, vertex_gt, distance, heatmap, step)
+
     return total_intersects / (total_union + 1e-7)
 
 
