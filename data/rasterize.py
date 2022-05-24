@@ -134,7 +134,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
     vertex_masks = np.transpose(vertex_masks, [0, 2, 1, 3]) # Hc, Wc, 8, 8
     vertex_masks = np.reshape(vertex_masks, [Hc, Wc, cell_size*cell_size]) # Hc, Wc, 64
     vertex_masks = vertex_masks.transpose(2, 0, 1) # 64, Hc, Wc
-    vertex_sum = vertex_masks.sum(0) # number of vertex in each cell, Hc, Wc
+    vertex_sum = vertex_masks.sum(0) # number of vertex in each cell, [Hc, Wc]
     # find cell with more then one vertex
     rows, cols = np.where(vertex_sum > 1)
     # N == len(rows) == len(cols)

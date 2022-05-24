@@ -214,7 +214,7 @@ class VectorizedLocalMap(object):
             sampled_points = np.array([list(line.interpolate(distance).coords) for distance in distances]).reshape(-1, 2)
 
         if self.normalize:
-            sampled_points = sampled_points / np.array([self.patch_size[1], self.patch_size[0]])
+            sampled_points = sampled_points / np.array([self.patch_size[1], self.patch_size[0]]) # 60, 30
 
         num_valid = len(sampled_points)
 

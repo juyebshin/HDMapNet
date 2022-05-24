@@ -19,7 +19,7 @@ from model.voxel import pad_or_trim_to_np
 
 
 class HDMapNetDataset(Dataset):
-    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False):
+    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False, normalize=False):
         super(HDMapNetDataset, self).__init__()
         patch_h = data_conf['ybound'][1] - data_conf['ybound'][0] # 30.0
         patch_w = data_conf['xbound'][1] - data_conf['xbound'][0] # 60.0
@@ -30,7 +30,7 @@ class HDMapNetDataset(Dataset):
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
         self.nusc = NuScenes(version=version, dataroot=dataroot)
-        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size, num_samples=num_samples, padding=padding)
+        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size, num_samples=num_samples, padding=padding, normalize=normalize)
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
 
@@ -216,8 +216,8 @@ def semantic_dataset(version, dataroot, data_conf, bsz, nworkers):
     return train_loader, val_loader
 
 class VectorMapNetDataset(HDMapNetDataset):
-    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False):
-        super(VectorMapNetDataset, self).__init__(version, dataroot, data_conf, is_train, num_samples, padding)
+    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False, normalize=False):
+        super(VectorMapNetDataset, self).__init__(version, dataroot, data_conf, is_train, num_samples, padding, normalize)
         self.thickness = data_conf['thickness']
         self.angle_class = data_conf['angle_class']
         self.dist_threshold = data_conf['dist_threshold']
