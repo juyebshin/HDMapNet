@@ -70,6 +70,58 @@ class MSEWithReluLoss(torch.nn.Module):
         loss = self.loss_fn(torch.clamp(F.relu(ypred), max=self.dist_threshold), ytgt)
         return loss
 
+class GraphLoss(nn.Module):
+    def __init__(self, patch_size: list, match_threshold=0.2, reduction='mean') -> None:
+        super(GraphLoss, self).__init__()
+        
+        # patch_size: [30.0, 60.0] list
+        self.patch_size = torch.tensor([patch_size[1], patch_size[0]]).cuda()
+        self.match_threshold = match_threshold
+        self.reduction = reduction
+
+    def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
+        # matches: [b, N, N]
+        # positions: [b, N, 3], x y c
+        # masks: [b, 300, 1]
+        # vectors_gt: [b] list of [instance] list of dict
+
+        # iterate in batch
+        cdist_list = []
+        for match, position, mask, vector_gt in zip(matches, positions, masks, vectors_gt):
+            # match: [N, N]
+            # position: [N, 3]
+            # mask: [N, 1]
+            # vector_gt: [instance] list of dict
+            mask = mask.squeeze(-1)
+            position_valid = position[..., :-1] * self.patch_size # de-normalize, [N, 2]
+            position_valid = position_valid[mask == 1] # [M, 2]
+            pts_list = []
+            for vector in vector_gt: # dict
+                pts, pts_num, type = vector['pts'], vector['pts_num'], vector['type']
+                pts = pts[:pts_num] # [p, 2] array
+                [pts_list.append(pt) for pt in pts]
+            position_gt = torch.tensor(pts_list).float().cuda() # [P, 2] shaped tensor
+            # compute chamfer distance
+            cdist = torch.cdist(position_valid, position_gt) # [N, P] shaped tensor
+            # nearest ground truth vectors
+            nearest = cdist.argmin(-1) # [N,] shaped tensor
+            cdist = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
+            cdist_list.append(cdist)
+        
+        cdist_batch = torch.stack(cdist_list) # [b,]
+
+        if self.reduction == 'none':
+            pass
+        elif self.reduction == 'mean':
+            cdist_batch = torch.mean(cdist_batch)
+        elif self.reduction == 'sum':
+            cdist_batch = torch.sum(cdist_batch)
+        else:
+            raise NotImplementedError
+        
+        return cdist_batch
+
+
 class DiscriminativeLoss(nn.Module):
     def __init__(self, embed_dim, delta_v, delta_d):
         super(DiscriminativeLoss, self).__init__()

@@ -8,7 +8,7 @@ import argparse
 
 import torch
 from torch.optim.lr_scheduler import StepLR
-from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss
+from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss, GraphLoss
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
@@ -54,6 +54,7 @@ def train(args):
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
     }
+    patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
     # torch.cuda.set_device(args.local_rank)
 
@@ -78,6 +79,7 @@ def train(args):
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
     vt_loss_fn = CEWithSoftmaxLoss().cuda()
+    graph_loss_fn = GraphLoss(patch_size).cuda()
 
     model.train()
     counter = 0
@@ -90,7 +92,7 @@ def train(args):
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -128,6 +130,8 @@ def train(args):
             else:
                 dt_loss = 0
             
+            graph_loss = graph_loss_fn(matches, positions, masks, vectors_gt)
+            
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
             #     vt_loss = vt_loss_fn(vertex, vertex_gt)
@@ -162,14 +166,15 @@ def train(args):
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
             
-            if counter % 200 == 0:
-                distance = distance.relu().clamp(max=args.dist_threshold)
-                heatmap = vertex.softmax(1)
-                visualize(writer, 'train', imgs, distance_gt, vertex_gt, distance, heatmap, counter)
+            if args.vis_interval > 0:
+                if counter % args.vis_interval == 0:
+                    distance = distance.relu().clamp(max=args.dist_threshold)
+                    heatmap = vertex.softmax(1)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, distance, heatmap, matches, positions, masks, patch_size, counter)
                 
             counter += 1
 
-        iou = eval_iou(model, val_loader, writer, epoch, 200)
+        iou = eval_iou(model, val_loader, writer, epoch, args.vis_interval)
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}")
 
@@ -195,7 +200,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/vectormapnet_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/graph_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -213,6 +218,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--vis_interval", type=int, default=200)
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')

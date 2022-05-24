@@ -72,7 +72,7 @@ def normalize_vertices(vertices: Tensor, image_shape):
     one = vertices.new_tensor(1) # [1], data 1
     size = torch.stack([one*width, one*height])[None] # [1, 2], data [400, 200]
     center = size / 2 # [1, 2], data [200, 100]
-    return (vertices - center) / center # N, 2
+    return (vertices - center) / size # [N, 2] values [-0.5, 0.5]
 
 def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
     """
@@ -168,6 +168,7 @@ class AttentionalGNN(nn.Module):
     def forward(self, embedding, mask=None):
         # Only self-attention is implemented for now
         # embedding: [b, 256, N]
+        # mask: [b, 1, N]
         for layer, name in zip(self.layers, self.names):
             # if name == 'cross':
             #     src0, src1 = desc1, desc0
@@ -219,6 +220,8 @@ class VectorMapNet(nn.Module):
 
         bin_score = nn.Parameter(torch.tensor(1.))
         self.register_parameter('bin_score', bin_score)
+
+        self.matching = nn.Sigmoid()
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, embedding, direction are not used
@@ -275,8 +278,8 @@ class VectorMapNet(nn.Module):
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
-        masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding = self.gnn(graph_embedding, masks) # [b, 256, N]
+        # masks = masks.transpose(1, 2) # [b, 1, N]
+        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
@@ -299,6 +302,9 @@ class VectorMapNet(nn.Module):
         #         torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
         #     ], 1)
 
+        # Symmetry property
+        # scores = (scores.transpose(1, 2) + scores) * 0.5
 
+        # return scores [b, N, N], pos_embedding (normalized -0.5~0.5 with scores) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction
+        return semantic, distance, vertex, embedding, direction, self.matching(scores), pos_embedding, masks
