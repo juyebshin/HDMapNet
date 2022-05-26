@@ -84,7 +84,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
         vectors_gt = vectors_gt[0]
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
-        positions_mask = positions[masks == 1]
+        positions_valid = positions[masks == 1] # [M, 3]
 
         fig = plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
@@ -99,6 +99,17 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
             plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
         
         writer.add_figure(f'{title}/vector_gt', fig, step)
+        plt.close()
+
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+
+        for pos in positions_valid: # [3,]
+            plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
+        
+        writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
 
 

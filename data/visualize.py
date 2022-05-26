@@ -11,4 +11,7 @@ def colorise(input, cmap, vmin=None, vmax=None):
     vmax = float(np.max(input)) if vmax is None else vmax
 
     input = (input - vmin) / (vmax - vmin)
-    return cmap(input)[..., :3] # :3 -> 0, 1, 2
+    if input.ndim > 1:
+        return cmap(input)[..., :3] # :3 -> 0, 1, 2
+    else:
+        return cmap(input)[:3] # :3 -> 0, 1, 2
