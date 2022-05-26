@@ -202,6 +202,7 @@ class VectorMapNet(nn.Module):
         self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
+        self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
         self.max_vertices = data_conf['num_vectors']*3 # 100*3
         self.feature_dim = data_conf['feature_dim'] # 256
         # self.GNN_layers = gnn_layers
@@ -218,8 +219,8 @@ class VectorMapNet(nn.Module):
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
-        bin_score = nn.Parameter(torch.tensor(1.))
-        self.register_parameter('bin_score', bin_score)
+        # bin_score = nn.Parameter(torch.tensor(1.))
+        # self.register_parameter('bin_score', bin_score)
 
         self.matching = nn.Sigmoid()
 
@@ -245,6 +246,11 @@ class VectorMapNet(nn.Module):
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
         onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+
+        # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
+        # scores[scores < self.vertex_threshold] = 0.0
+        # scores_max, max_idx = scores.max(-1) # b, 25, 50, 1
+        # vertices_cell = [torch.nonzero(vc.squeeze(-1)) for vc in scores_max] # list of length b, [N, 2(row, col)] tensor, (row, col) within (25, 50)
 
         # Extract vertices
         # vertices: [N, 2] in XY vehicle space

@@ -53,6 +53,7 @@ def train(args):
         'num_vectors': args.num_vectors, # 100
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
+        'vertex_threshold': args.vertex_threshold, # 0.015
     }
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
@@ -138,7 +139,7 @@ def train(args):
             # else:
             #     vt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt
+            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + graph_loss * args.scale_cdist
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
@@ -165,6 +166,7 @@ def train(args):
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
+                writer.add_scalar('train/cdist_loss', graph_loss, counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0:
@@ -249,6 +251,8 @@ if __name__ == '__main__':
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
     parser.add_argument("--scale_vt", type=float, default=1.0)
+    parser.add_argument("--scale_cdist", type=float, default=1.0, 
+                        help="Scale of Chamfer distance loss")
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_false')
@@ -263,6 +267,7 @@ if __name__ == '__main__':
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=100) # 100 * 3 classes = 300 in total
+    parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
 

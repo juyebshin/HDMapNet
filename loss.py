@@ -82,7 +82,7 @@ class GraphLoss(nn.Module):
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N, N]
         # positions: [b, N, 3], x y c
-        # masks: [b, 300, 1]
+        # masks: [b, N, 1]
         # vectors_gt: [b] list of [instance] list of dict
 
         # iterate in batch
@@ -94,18 +94,23 @@ class GraphLoss(nn.Module):
             # vector_gt: [instance] list of dict
             mask = mask.squeeze(-1)
             position_valid = position[..., :-1] * self.patch_size # de-normalize, [N, 2]
-            position_valid = position_valid[mask == 1] # [M, 2]
+            position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []
             for vector in vector_gt: # dict
                 pts, pts_num, type = vector['pts'], vector['pts_num'], vector['type']
                 pts = pts[:pts_num] # [p, 2] array
                 [pts_list.append(pt) for pt in pts]
+            
             position_gt = torch.tensor(pts_list).float().cuda() # [P, 2] shaped tensor
-            # compute chamfer distance
-            cdist = torch.cdist(position_valid, position_gt) # [N, P] shaped tensor
-            # nearest ground truth vectors
-            nearest = cdist.argmin(-1) # [N,] shaped tensor
-            cdist = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
+
+            if len(position_gt) > 0 and len(position_valid) > 0:            
+                # compute chamfer distance # [N, P] shaped tensor
+                cdist = torch.cdist(position_valid, position_gt) # [M, P]
+                # nearest ground truth vectors
+                nearest = cdist.argmin(-1) # [N,] shaped tensor
+                cdist = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
+            else:
+                cdist = torch.tensor(0.0).float().cuda()
             cdist_list.append(cdist)
         
         cdist_batch = torch.stack(cdist_list) # [b,]
