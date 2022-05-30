@@ -119,7 +119,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             match = matches_idx[i]
             if matches[i, match] > 0.8:
-                plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(pos[2], 'jet', 0.0, 1.0))
+                plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
