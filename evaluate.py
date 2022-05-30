@@ -91,6 +91,9 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
         positions_valid = positions[masks == 1] # [M, 3]
 
+        matches = matches.triu(1)[masks == 1] # [N, N] upper triangle matrix without diagonal
+        matches = matches[:, masks == 1] # [N, N] masked
+
         fig = plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
