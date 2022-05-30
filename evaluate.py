@@ -11,6 +11,7 @@ from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou
 from model import get_model
+from model.vectormapnet import simple_nms
 from data.visualize import colorise
 from data.image import denormalize_img
 
@@ -59,6 +60,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         heatmap = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
         heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
         heatmap = np.reshape(heatmap, [Hc*8, Wc*8]) # 200, 400
+        # heatmap_nms = simple_nms(torch.from_numpy(heatmap).unsqueeze(0), 4).squeeze(0) # 200, 400
 
         nodust = vertex[:-1, :, :] # 64, 25, 50
         nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
@@ -72,6 +74,9 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         heatmap[heatmap < 0.015] = 0.0
         heatmap[heatmap > 0.0] = 1.0
         writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        # heatmap_nms[heatmap_nms < 0.015] = 0.0
+        # heatmap_nms[heatmap_nms > 0.0] = 1.0
+        # writer.add_image(f'{title}/vertex_heatmap_nms', colorise(heatmap_nms, 'hot', 0.0, 1.0), step, dataformats='HWC')
     
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N, N]

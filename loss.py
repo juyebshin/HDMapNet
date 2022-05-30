@@ -96,10 +96,12 @@ class GraphLoss(nn.Module):
             position_valid = position[..., :-1] * self.patch_size # de-normalize, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []
-            for vector in vector_gt: # dict
+            pts_ins_list = []
+            for ins, vector in enumerate(vector_gt): # dict
                 pts, pts_num, type = vector['pts'], vector['pts_num'], vector['type']
                 pts = pts[:pts_num] # [p, 2] array
                 [pts_list.append(pt) for pt in pts]
+                [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
             
             position_gt = torch.tensor(pts_list).float().cuda() # [P, 2] shaped tensor
 
@@ -107,10 +109,14 @@ class GraphLoss(nn.Module):
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
                 # nearest ground truth vectors
-                nearest = cdist.argmin(-1) # [N,] shaped tensor
+                nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt
                 cdist = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
+                if len(position_gt) > 1:
+                    match_gt = torch.zeros_like(match) # [N, N]
             else:
                 cdist = torch.tensor(0.0).float().cuda()
+            
+            
             cdist_list.append(cdist)
         
         cdist_batch = torch.stack(cdist_list) # [b,]

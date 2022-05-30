@@ -45,6 +45,23 @@ def MLP(channels: list, do_bn=True):
     
     return nn.Sequential(*layers)
 
+def simple_nms(scores, nms_radius: int):
+    """ Fast Non-maximum suppression to remove nearby points """
+    assert(nms_radius >= 0)
+
+    def max_pool(x):
+        return torch.nn.functional.max_pool2d(
+            x, kernel_size=nms_radius*2+1, stride=1, padding=nms_radius)
+
+    zeros = torch.zeros_like(scores)
+    max_mask = scores == max_pool(scores)
+    for _ in range(2):
+        supp_mask = max_pool(max_mask.float()) > 0
+        supp_scores = torch.where(supp_mask, zeros, scores)
+        new_max_mask = supp_scores == max_pool(supp_scores)
+        max_mask = max_mask | (new_max_mask & (~supp_mask))
+    return torch.where(max_mask, scores, zeros)
+
 def remove_borders(vertices, scores, border: int, height: int, width: int):
         """ Removes vertices too close to the border """
         mask_h = (vertices[:, 0] >= border) & (vertices[:, 0] < (height - border))
@@ -235,28 +252,39 @@ class VectorMapNet(nn.Module):
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        # onehot = onehot_encoding(scores)[:, :-1] # b, 64, 25, 50, onehot over axis 64
-        onehot = self.argmax(scores) # b, 65, 25, 50, onehot over axis 64
-        onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
-        onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
-        vertices_cell = [torch.nonzero(vc) for vc in onehot_max] # list of length b, [N, 2(row, col)] tensor
+        onehot = self.argmax(scores) # b, 65, 25, 50, onehot over axis 64 list of length b, [N, 2(row, col)] tensor
         scores = scores[:, :-1] # b, 64, 25, 50
         b, _, h, w = scores.shape # b, 64, 25, 50
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        scores = simple_nms(scores, int(self.cell_size*0.5)) # 4, 200, 400
+        score_shape = scores.shape # 4, 200, 400
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
         # scores[scores < self.vertex_threshold] = 0.0
         # scores_max, max_idx = scores.max(-1) # b, 25, 50, 1
         # vertices_cell = [torch.nonzero(vc.squeeze(-1)) for vc in scores_max] # list of length b, [N, 2(row, col)] tensor, (row, col) within (25, 50)
 
-        # Extract vertices
+        # [1] Extract vertices
+        # onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
+        # onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
+        # vertices_cell = [torch.nonzero(vc) for vc in onehot_max] #
+        # onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        # onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
         # vertices: [N, 2] in XY vehicle space
         # scores: [N] vertex confidences
-        vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
+        # vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
+        # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+
+        # [2] Extract vertices using NMS
+        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores] # list of length b, [N, 2(row, col)] tensor
         scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+        vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
+
+        # Convert (h, w) to (x, y), normalized
+        # v: [N, 2]
+        vertices = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
+
         # Extract distance transform
         dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
 
@@ -271,10 +299,6 @@ class VectorMapNet(nn.Module):
                 top_k_vertices(v, s, d, self.max_vertices)
                 for v, s, d in zip(vertices, scores, dt_embedding)
             ]))
-
-        # Convert (h, w) to (x, y), normalized
-        # v: [N, 2]
-        vertices = [normalize_vertices(torch.flip(v, [1]).float(), onehot_nodust.shape) for v in vertices] # list of [N, 2] tensor
 
         # Positional embedding (x, y, c)
         pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
