@@ -91,10 +91,6 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
         positions_valid = positions[masks == 1] # [M, 3]
 
-        matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
-        matches = matches[:, masks == 1] # upper masked [M, M]
-        matches_idx = matches.argmax(1) # [M, ]
-
         fig = plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
@@ -115,11 +111,16 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.ylim(-15, 15)
         plt.axis('off')
 
+        matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
+        matches = matches[:, masks == 1] # upper masked [M, M]
+        matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
+
         for i, pos in enumerate(positions_valid): # [3,]
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
-            match = matches_idx[i]
-            if matches[i, match] > 0.8:
-                plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
+            if matches_idx is not None:
+                match = matches_idx[i]
+                if matches[i, match] > 0.8:
+                    plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
