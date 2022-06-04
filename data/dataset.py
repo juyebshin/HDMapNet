@@ -19,7 +19,7 @@ from model.voxel import pad_or_trim_to_np
 
 
 class HDMapNetDataset(Dataset):
-    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False, normalize=False):
+    def __init__(self, version, dataroot, data_conf, is_train):
         super(HDMapNetDataset, self).__init__()
         patch_h = data_conf['ybound'][1] - data_conf['ybound'][0] # 30.0
         patch_w = data_conf['xbound'][1] - data_conf['xbound'][0] # 60.0
@@ -30,7 +30,7 @@ class HDMapNetDataset(Dataset):
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
         self.nusc = NuScenes(version=version, dataroot=dataroot)
-        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size, num_samples=num_samples, padding=padding, normalize=normalize)
+        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size)
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
 
@@ -216,8 +216,8 @@ def semantic_dataset(version, dataroot, data_conf, bsz, nworkers):
     return train_loader, val_loader
 
 class VectorMapNetDataset(HDMapNetDataset):
-    def __init__(self, version, dataroot, data_conf, is_train, num_samples=300, padding=False, normalize=False):
-        super(VectorMapNetDataset, self).__init__(version, dataroot, data_conf, is_train, num_samples, padding, normalize)
+    def __init__(self, version, dataroot, data_conf, is_train):
+        super(VectorMapNetDataset, self).__init__(version, dataroot, data_conf, is_train)
         self.thickness = data_conf['thickness']
         self.angle_class = data_conf['angle_class']
         self.dist_threshold = data_conf['dist_threshold']
@@ -241,9 +241,9 @@ class VectorMapNetDataset(HDMapNetDataset):
         semantic_masks, instance_masks, distance_masks, vertex_masks, vectors = self.get_vector_map(rec)
         return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, vectors
     
-def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, num_samples=300):
-    train_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=True, num_samples=num_samples)
-    val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False, num_samples=num_samples)
+def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers):
+    train_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=True)
+    val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True, num_workers=nworkers, drop_last=True, collate_fn=collate_vectors)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers, collate_fn=collate_vectors)
