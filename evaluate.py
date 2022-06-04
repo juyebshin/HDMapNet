@@ -14,6 +14,7 @@ from model import get_model
 from model.vectormapnet import simple_nms
 from data.visualize import colorise
 from data.image import denormalize_img
+from loss import GraphLoss
 
 colors_plt = ['r', 'b', 'g']
 
@@ -24,13 +25,14 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, patch_size: list, step: int):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, matches_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, patch_size: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
     imgs = imgs.detach().cpu().float()[0] # 6, 3, 128, 352
     # imgs = imgs.fliplr()
-    imgs = torch.index_select(imgs, 0, torch.LongTensor([0, 1, 2, 5, 4, 3]))
+    imgs[3:] = torch.flip(imgs[3:], [3,])
+    # imgs = torch.index_select(imgs, 0, torch.LongTensor([0, 1, 2, 5, 4, 3]))
     imgs_grid = torchvision.utils.make_grid(imgs, nrow=3) # 3, 262, 1064
     imgs_grid = np.array(denormalize_img(imgs_grid)) # 262, 1064, 3
     writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
@@ -83,11 +85,13 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # positions: [b, N, 3], x y c
         # masks: [b, 300, 1]
         # vectors_gt: [b] list of [instance] list of dict
+        # matches_gt: [b, N, N]
         # patch_size: [30.0, 60.0]
         matches = matches.detach().cpu().float().numpy()[0] # [N, N]
         positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
         masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
         vectors_gt = vectors_gt[0]
+        matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
         positions_valid = positions[masks == 1] # [M, 3]
 
@@ -106,6 +110,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/vector_gt', fig, step)
         plt.close()
 
+        # Vector prediction
         fig = plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
@@ -125,10 +130,45 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
 
+        # Match prediction
+        fig = plt.figure()
+        plt.grid(False)
+        plt.imshow(matches, cmap='hot', interpolation='nearest') # [M, M]
+        writer.add_figure(f'{title}/match_pred', fig, step)
+        plt.close()
+
+        # Aligned GT matches
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+
+        matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks == 1] # [M, M] upper triangle matrix without diagonal
+        matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
+        
+        for i, pos in enumerate(positions_valid): # [3,]
+            plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
+            if matches_idx is not None:
+                match = matches_idx[i]
+                if matches_gt[i, match] == 1.0:
+                    plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
+        
+        writer.add_figure(f'{title}/match_aligned', fig, step)
+        plt.close()
+
+        # Match gt
+        fig = plt.figure()
+        plt.grid(False)
+        plt.imshow(matches_gt, cmap='hot', interpolation='nearest') # [M, M]
+        writer.add_figure(f'{title}/match_gt', fig, step)
+        plt.close()
+
 
 
 def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     # st
+    graph_loss_fn = GraphLoss([30.0, 60.0]).cuda()
+
     model.eval()
     counter = 0
     total_intersects = 0
@@ -146,13 +186,15 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_intersects += intersects
             total_union += union
 
+            _, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
+
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
                         distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, distance, heatmap, matches, positions, masks, [30.0, 60.0], step)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, [30.0, 60.0], step)
             
             counter += 1
 
