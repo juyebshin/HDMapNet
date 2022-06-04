@@ -79,6 +79,8 @@ class GraphLoss(nn.Module):
         self.match_threshold = match_threshold
         self.reduction = reduction
 
+        self.mse_fn = torch.nn.MSELoss()
+
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N, N]
         # positions: [b, N, 3], x y c
@@ -87,12 +89,14 @@ class GraphLoss(nn.Module):
 
         # iterate in batch
         cdist_list = []
+        matches_gt = []
+        mloss_list = []
         for match, position, mask, vector_gt in zip(matches, positions, masks, vectors_gt):
             # match: [N, N]
             # position: [N, 3]
-            # mask: [N, 1]
+            # mask: [N, 1] M ones
             # vector_gt: [instance] list of dict
-            mask = mask.squeeze(-1)
+            mask = mask.squeeze(-1) # [N,]
             position_valid = position[..., :-1] * self.patch_size # de-normalize, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []
@@ -104,33 +108,66 @@ class GraphLoss(nn.Module):
                 [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
             
             position_gt = torch.tensor(pts_list).float().cuda() # [P, 2] shaped tensor
+            match_gt = torch.zeros_like(match) # [N, N]
 
             if len(position_gt) > 0 and len(position_valid) > 0:            
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
                 # nearest ground truth vectors
                 nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt
-                cdist = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
-                if len(position_gt) > 1:
-                    match_gt = torch.zeros_like(match) # [N, N]
+                cdist_mean = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
+                if len(nearest) > 1:
+                    for idx_pred, idx_gt in enumerate(nearest):
+                        # if idx_pred < len(nearest) - 1:
+                        # idx_gt_with_same_ins = torch.where(torch.tensor(pts_ins_list).long().cuda() == pts_ins_list[idx_gt])[0] # can have more than one
+                        idx_gt_next = idx_gt + 1 if idx_gt < nearest.max() else -1
+                        idx_pred_next = torch.where(nearest == idx_gt_next)[0]
+                        idx_pred_next = idx_pred_next[cdist[idx_pred_next, idx_gt_next].argmin()] if len(idx_pred_next) else None # get one that has min distance
+                        match_gt[idx_pred, idx_pred_next] = 1.0 if idx_pred_next is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_gt_next] else 0.0
+
+
+                        # # i: index of predicted vector, idx: index of gt vector nearest to the i-th predicted vector
+                        # idx_prev = idx_gt - 1 if idx_gt > 0 else -1
+                        # idx_next = idx_gt + 1 if idx_gt < nearest.max() else -1
+                        # i_prev = torch.where(nearest == idx_prev)[0] # can have more than one
+                        # i_next = torch.where(nearest == idx_next)[0] # can have more than one
+                        # i_prev = i_prev[cdist[i_prev, idx_prev].argmin()] if len(i_prev) else None # get one that has min distance
+                        # i_next = i_next[cdist[i_next, idx_next].argmin()] if len(i_next) else None # get one that has min distance
+                        # match_gt[idx_pred, i_prev] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_prev] else 0.0
+                        # match_gt[idx_pred, i_next] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_next] else 0.0
+                    
+                    match = match[mask == 1][:, mask == 1] # [M, M]
+                    # match_gt = torch.triu(match_gt, 1)
+                    match_gt = torch.clamp(match_gt.T + match_gt, max=1.0) # Symmetry constraint
+                    match_gt_valid = match_gt[mask == 1][:, mask == 1] # [M, M]
+                    match_gt_valid[range(len(match_gt_valid)), range(len(match_gt_valid))] = match.diagonal() # ignore diagonal entities
+                    match_loss = self.mse_fn(match, match_gt_valid)
+                else:
+                    match_loss = torch.tensor(0.0).float().cuda()
             else:
-                cdist = torch.tensor(0.0).float().cuda()
+                cdist_mean = torch.tensor(0.0).float().cuda()
+                match_loss = torch.tensor(0.0).float().cuda()
             
-            
-            cdist_list.append(cdist)
+            cdist_list.append(cdist_mean)
+            matches_gt.append(match_gt)
+            mloss_list.append(match_loss)
         
         cdist_batch = torch.stack(cdist_list) # [b,]
+        mloss_batch = torch.stack(mloss_list) # [b,]
+        matches_gt = torch.stack(matches_gt) # [b,]
 
         if self.reduction == 'none':
             pass
         elif self.reduction == 'mean':
             cdist_batch = torch.mean(cdist_batch)
+            mloss_batch = torch.mean(mloss_batch)
         elif self.reduction == 'sum':
             cdist_batch = torch.sum(cdist_batch)
+            mloss_batch = torch.sum(mloss_batch)
         else:
             raise NotImplementedError
         
-        return cdist_batch
+        return cdist_batch, mloss_batch, matches_gt
 
 
 class DiscriminativeLoss(nn.Module):

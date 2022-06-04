@@ -59,7 +59,7 @@ def train(args):
 
     # torch.cuda.set_device(args.local_rank)
 
-    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.num_vectors)
+    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
 
     if args.finetune:
@@ -131,7 +131,7 @@ def train(args):
             else:
                 dt_loss = 0
             
-            graph_loss = graph_loss_fn(matches, positions, masks, vectors_gt)
+            cdist_loss, match_loss, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
             
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
@@ -139,7 +139,7 @@ def train(args):
             # else:
             #     vt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + graph_loss * args.scale_cdist
+            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
@@ -166,13 +166,14 @@ def train(args):
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
-                writer.add_scalar('train/cdist_loss', graph_loss, counter)
+                writer.add_scalar('train/cdist_loss', cdist_loss, counter)
+                writer.add_scalar('train/match_loss', match_loss, counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0:
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, distance, heatmap, matches, positions, masks, patch_size, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, patch_size, counter)
                 
             counter += 1
 
@@ -202,7 +203,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/graph_debug_v2')
+    parser.add_argument("--logdir", type=str, default='./runs/match_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -253,6 +254,8 @@ if __name__ == '__main__':
     parser.add_argument("--scale_vt", type=float, default=1.0)
     parser.add_argument("--scale_cdist", type=float, default=1.0, 
                         help="Scale of Chamfer distance loss")
+    parser.add_argument("--scale_match", type=float, default=1.0, 
+                        help="Scale of matching loss")
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_false')
@@ -266,7 +269,7 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=100) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
