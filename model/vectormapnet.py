@@ -170,6 +170,7 @@ class AttentionalPropagation(nn.Module):
         nn.init.constant_(self.mlp[-1].bias, 0.0)
 
     def forward(self, x, source, mask=None):
+        # x, source: [b, 256(feature_dim), N]
         # attn(q, k, v)
         message = self.attn(x, source, source, mask) # [b, 256, N]
         return self.mlp(torch.cat([x, message], dim=1))
@@ -191,6 +192,7 @@ class AttentionalGNN(nn.Module):
             #     src0, src1 = desc1, desc0
             # else:  # if name == 'self':
             #     src0, src1 = desc0, desc1
+            # Attentional propagation
             delta = layer(embedding, embedding, mask) # [b, 256, N]
             embedding = (embedding + delta) # [b, 256, N]
         return embedding
@@ -220,7 +222,7 @@ class VectorMapNet(nn.Module):
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
-        self.max_vertices = data_conf['num_vectors']*3 # 100*3
+        self.max_vertices = data_conf['num_vectors'] # 300
         self.feature_dim = data_conf['feature_dim'] # 256
         # self.GNN_layers = gnn_layers
 
@@ -239,6 +241,7 @@ class VectorMapNet(nn.Module):
         # bin_score = nn.Parameter(torch.tensor(1.))
         # self.register_parameter('bin_score', bin_score)
 
+        self.matching_proj = nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False)
         self.matching = nn.Sigmoid()
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
@@ -315,6 +318,9 @@ class VectorMapNet(nn.Module):
         # Adjacency matrix score as inner product of all nodes
         scores = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
         scores = scores / self.feature_dim**.5 # [b, N, N]
+
+        # scores = self.matching_proj(F.relu(self.matching_proj(scores.T).T))
+        scores = self.matching_proj(scores)
 
         """ Matching layer (put these in a function or class) """
         # b, m, n = scores.shape
