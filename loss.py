@@ -79,7 +79,7 @@ class GraphLoss(nn.Module):
         self.match_threshold = match_threshold
         self.reduction = reduction
 
-        self.mse_fn = torch.nn.MSELoss()
+        self.mse_fn = torch.nn.CrossEntropyLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N, N]
@@ -136,11 +136,19 @@ class GraphLoss(nn.Module):
                         # match_gt[idx_pred, i_prev] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_prev] else 0.0
                         # match_gt[idx_pred, i_next] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_next] else 0.0
                     
-                    match = match[mask == 1][:, mask == 1] # [M, M]
+                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
+                    match = match[mask == 1][:, mask_bins == 1] # [M, M]
                     # match_gt = torch.triu(match_gt, 1)
-                    match_gt = torch.clamp(match_gt.T + match_gt, max=1.0) # Symmetry constraint
-                    match_gt_valid = match_gt[mask == 1][:, mask == 1] # [M, M]
-                    match_gt_valid[range(len(match_gt_valid)), range(len(match_gt_valid))] = match.diagonal() # ignore diagonal entities
+                    # match_gt = torch.clamp(match_gt.T + match_gt, max=1.0) # Symmetry constraint
+                    match_gt_valid = match_gt[mask == 1][:, mask_bins == 1] # [M, M]
+                    match_gt_valid_sum = match_gt_valid.sum(1)
+                    match_gt_valid[match_gt_valid_sum == 0, -1] = 1.0
+                    # couplings = torch.cat([torch.cat([match_gt_valid, bin0], -1), torch.cat([bin1, alpha], -1)], 0) # [M+1, M+1]
+
+                    # match_gt_valid[range(len(match_gt_valid)), range(len(match_gt_valid))] = match.diagonal() # ignore diagonal entities
+                    # add minibatch dimension and class first
+                    match = match.transpose(0, 1).unsqueeze(0)
+                    match_gt_valid = match_gt_valid.transpose(0, 1).unsqueeze(0) # [1, M+1, M]
                     match_loss = self.mse_fn(match, match_gt_valid)
                 else:
                     match_loss = torch.tensor(0.0).float().cuda()

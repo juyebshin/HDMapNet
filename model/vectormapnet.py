@@ -238,11 +238,15 @@ class VectorMapNet(nn.Module):
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
-        # bin_score = nn.Parameter(torch.tensor(1.))
-        # self.register_parameter('bin_score', bin_score)
+        bin_score = nn.Parameter(torch.tensor(1.))
+        self.register_parameter('bin_score', bin_score)
 
-        self.matching_proj = nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False)
-        self.matching = nn.Sigmoid()
+        self.matching_proj = nn.Sequential(
+            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False),
+        )
+        self.matching = nn.Softmax(-1)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, embedding, direction are not used
@@ -312,25 +316,42 @@ class VectorMapNet(nn.Module):
 
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N]
+        graph_embedding = self.gnn(graph_embedding) # [b, 256, N] , masks.transpose(1, 2)
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
         scores = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
         scores = scores / self.feature_dim**.5 # [b, N, N]
+        b, m, n = scores.shape
+        bins = self.bin_score.expand(b, m, 1) # [b, N, 1]
+        scores = torch.cat([scores, bins], -1) # [b, N, N+1]
 
         # scores = self.matching_proj(F.relu(self.matching_proj(scores.T).T))
         scores = self.matching_proj(scores)
 
         """ Matching layer (put these in a function or class) """
         # b, m, n = scores.shape
+        # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
         # one = scores.new_tensor(1)
-        # ms, ns = (m*one).to(scores), (n*one).to(scores) # tensor(N), tensor(N)
+        # ms, ns = (m_valid*one).to(scores), (n_valid*one).to(scores) # tensor(M), tensor(M)
 
         # # alpha = self.bin_score
         # bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-        # bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-        # alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+        # # bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
+        # # alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+        # couplings = torch.cat([scores, bins0], -1) # [b, N, N+1]
+        # masks_bins = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
+
+        # norm = - (ms + ns).log() # [b]
+        # log_mu = torch.cat([norm.unsqueeze(-1).expand(-1, m), (ns.log() + norm).unsqueeze(-1)], -1) # [b, N+1]
+        # log_nu = torch.cat([norm.unsqueeze(-1).expand(-1, n), (ms.log() + norm).unsqueeze(-1)], -1) # [b, N+1]
+
+        # u, v = torch.zeros_like(log_mu), torch.zeros_like(log_nu) # [b, N+1]
+        # for _ in range(100):
+        #     u = log_mu[:, :-1] - torch.logsumexp(couplings + v.unsqueeze(1), dim=2) # [b, N]
+
+        # couplings = couplings + u.unsqueeze(2) # [b, N, N+1]
+        # couplings = couplings - norm
 
         # couplings = torch.cat( # [b, N+1, N+1]
         #     [
@@ -343,4 +364,4 @@ class VectorMapNet(nn.Module):
 
         # return scores [b, N, N], pos_embedding (normalized -0.5~0.5 with scores) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction, self.matching(scores), pos_embedding, masks
+        return semantic, distance, vertex, embedding, direction, scores, pos_embedding, masks

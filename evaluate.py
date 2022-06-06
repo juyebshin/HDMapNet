@@ -90,6 +90,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         matches = matches.detach().cpu().float().numpy()[0] # [N, N]
         positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
         masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
+        masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
@@ -116,15 +117,15 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.ylim(-15, 15)
         plt.axis('off')
 
-        matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
-        matches = matches[:, masks == 1] # upper masked [M, M]
+        # matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
+        matches = matches[masks == 1][:, masks_bins == 1] # masked [M, M+1]
         matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
 
         for i, pos in enumerate(positions_valid): # [3,]
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches[i, match] > 0.8:
+                if matches[i, match] > 0.1: # 0.8 too high?
                     plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
@@ -133,7 +134,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # Match prediction
         fig = plt.figure()
         plt.grid(False)
-        plt.imshow(matches, cmap='hot', interpolation='nearest') # [M, M]
+        plt.imshow(matches, cmap='hot', interpolation='nearest', vmin=0.0, vmax=1.0) # [M, M]
         writer.add_figure(f'{title}/match_pred', fig, step)
         plt.close()
 
@@ -143,7 +144,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.ylim(-15, 15)
         plt.axis('off')
 
-        matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks == 1] # [M, M] upper triangle matrix without diagonal
+        # matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks_bins == 1] # [M, M] upper triangle matrix without diagonal
+        matches_gt = matches_gt[masks == 1][:, masks_bins == 1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
         for i, pos in enumerate(positions_valid): # [3,]
@@ -173,6 +175,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     counter = 0
     total_intersects = 0
     total_union = 0
+    total_cdist = 0.0
     with torch.no_grad():
         for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
@@ -186,7 +189,8 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_intersects += intersects
             total_union += union
 
-            _, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
+            cdist, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
+            total_cdist += cdist
 
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
@@ -198,6 +202,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             
             counter += 1
 
+    print(f'Chamfer distance: {float(total_cdist/counter):.4f}')
     return total_intersects / (total_union + 1e-7)
 
 
@@ -213,10 +218,14 @@ def main(args):
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
         'cell_size': args.cell_size, # 8
+        'num_vectors': args.num_vectors, # 100
+        'feature_dim': args.feature_dim, # 256
+        'gnn_layers': args.gnn_layers, # ['self']*7
+        'vertex_threshold': args.vertex_threshold, # 0.015
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     print(eval_iou(model, val_loader))
@@ -232,7 +241,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='HDMapNet_cam')
+    parser.add_argument("--model", type=str, default='VectorMapNet_cam')
 
     # training config
     parser.add_argument("--nepochs", type=int, default=30)
@@ -245,7 +254,7 @@ if __name__ == '__main__':
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default=None)
+    parser.add_argument('--modelf', type=str, default='./runs/graph_debug_v2/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
@@ -271,14 +280,27 @@ if __name__ == '__main__':
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
+    parser.add_argument("--scale_cdist", type=float, default=1.0, 
+                        help="Scale of Chamfer distance loss")
+    parser.add_argument("--scale_match", type=float, default=1.0, 
+                        help="Scale of matching loss")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--distance_reg", action='store_false')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
-    parser.add_argument("--vertex_pred", action='store_true')
+    parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+
+    # semantic segmentation config
+    parser.add_argument("--segmentation", action='store_true')
+
+    # VectorMapNet config
+    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
+    parser.add_argument("--vertex_threshold", type=float, default=0.01)
+    parser.add_argument("--feature_dim", type=int, default=256)
+    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
 
     args = parser.parse_args()
     main(args)
