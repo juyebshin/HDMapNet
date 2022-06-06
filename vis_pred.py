@@ -11,7 +11,7 @@ from matplotlib.cm import get_cmap
 import tqdm
 import torch
 
-from data.dataset import semantic_dataset
+from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from model import get_model
 from postprocess.vectorize import vectorize
@@ -35,16 +35,16 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
     vertex_cmap = get_cmap('hot')
     model.eval()
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, direction_gt, distance_gt, vertex_gt) in enumerate(val_loader):
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
 
-            semantic, distance, vertex, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
-            semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
+            # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
             # semantic[semantic < 0.1] = np.nan
-            semantic[semantic < 0.1] = 0.0
+            # semantic[semantic < 0.1] = 0.0
 
             semantic_gt = semantic_gt.cpu().numpy().astype('uint8')
             distance_gt = distance_gt.cpu().numpy().astype('float32')
@@ -56,26 +56,26 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             vmax = np.max(distance_gt)
             distance_gt = (distance_gt - vmin) / (vmax - vmin)
 
-            for si in range(semantic.shape[0]): # iterate over batch
+            for si in range(distance.shape[0]): # iterate over batch
                 # semantic: b, 4, 200, 400
-                semantic_pred_onehot = np.argmax(semantic[si], axis=0)
-                semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
-                impath = os.path.join(logdir, 'seg')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                print('saving', imname)
-                Image.fromarray(semantic_pred_color).save(imname)
+                # semantic_pred_onehot = np.argmax(semantic[si], axis=0)
+                # semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
+                # impath = os.path.join(logdir, 'seg')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                # print('saving', imname)
+                # Image.fromarray(semantic_pred_color).save(imname)
 
-                # semantic_gt: b, 4, 200, 400 value=[0, 1]
-                semantic_gt_onehot = np.argmax(semantic_gt[si], axis=0)
-                semantic_gt_color = semantic_color[semantic_gt_onehot].astype('uint8') # 200, 400, 3
-                impath = os.path.join(logdir, 'seg_gt')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                print('saving', imname)
-                Image.fromarray(semantic_gt_color).save(imname)
+                # # semantic_gt: b, 4, 200, 400 value=[0, 1]
+                # semantic_gt_onehot = np.argmax(semantic_gt[si], axis=0)
+                # semantic_gt_color = semantic_color[semantic_gt_onehot].astype('uint8') # 200, 400, 3
+                # impath = os.path.join(logdir, 'seg_gt')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                # print('saving', imname)
+                # Image.fromarray(semantic_gt_color).save(imname)
 
                 # distance: b, 3, 200, 400
                 if distance_reg:
@@ -260,14 +260,18 @@ def main(args):
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
         'cell_size': args.cell_size, # 8
+        'num_vectors': args.num_vectors, # 100
+        'feature_dim': args.feature_dim, # 256
+        'gnn_layers': args.gnn_layers, # ['self']*7
+        'vertex_threshold': args.vertex_threshold, # 0.015
     }
 
-    train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
+    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.conf_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     if args.instance_seg and args.direction_pred:
         vis_vector(model, val_loader, args.angle_class, args.logdir)
 
@@ -295,7 +299,7 @@ if __name__ == '__main__':
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default='./runs/distance_vertex/model_best.pt')
+    parser.add_argument('--modelf', type=str, default='./runs/graph_debug_v2/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
@@ -323,13 +327,21 @@ if __name__ == '__main__':
     parser.add_argument("--scale_dt", type=float, default=1.0)
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--distance_reg", action='store_false')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
-    parser.add_argument("--vertex_pred", action='store_true')
+    parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
-    parser.add_argument("--conf_threshold", type=float, default=0.05)
+
+    # semantic segmentation config
+    parser.add_argument("--segmentation", action='store_true')
+
+    # VectorMapNet config
+    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
+    parser.add_argument("--vertex_threshold", type=float, default=0.1)
+    parser.add_argument("--feature_dim", type=int, default=256)
+    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
 
     args = parser.parse_args()
     main(args)
