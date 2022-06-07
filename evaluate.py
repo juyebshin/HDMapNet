@@ -119,13 +119,16 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
         # matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
         matches = matches[masks == 1][:, masks_bins == 1] # masked [M, M+1]
+        matches_nodust = matches[:, :-1] # [M, M]
         matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
+        matches_max = matches[:, :-1].max(1) # [M, ]
+        indices = matches_max.
 
         for i, pos in enumerate(positions_valid): # [3,]
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches[i, match] > 0.1: # 0.8 too high?
+                if matches[i, match] > 0.1 and match < len(matches): # 0.8 too high?
                     plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
@@ -135,6 +138,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         fig = plt.figure()
         plt.grid(False)
         plt.imshow(matches, cmap='hot', interpolation='nearest', vmin=0.0, vmax=1.0) # [M, M]
+        plt.colorbar()
         writer.add_figure(f'{title}/match_pred', fig, step)
         plt.close()
 
@@ -145,14 +149,15 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
 
         # matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks_bins == 1] # [M, M] upper triangle matrix without diagonal
-        matches_gt = matches_gt[masks == 1][:, masks_bins == 1] # [M, M]
+        matches_gt = matches_gt[masks == 1][:, masks_bins == 1] # [M, M+1]
+        # matches_gt = matches_gt[:, :-1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
         for i, pos in enumerate(positions_valid): # [3,]
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches_gt[i, match] == 1.0:
+                if matches_gt[i, match] == 1.0 and match < len(matches_gt): # less then 300
                     plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
         
         writer.add_figure(f'{title}/match_aligned', fig, step)
@@ -162,6 +167,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         fig = plt.figure()
         plt.grid(False)
         plt.imshow(matches_gt, cmap='hot', interpolation='nearest') # [M, M]
+        plt.colorbar()
         writer.add_figure(f'{title}/match_gt', fig, step)
         plt.close()
 
@@ -195,6 +201,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
                         distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
+                        matches = matches.softmax(2)
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
