@@ -116,7 +116,7 @@ class GraphLoss(nn.Module):
                 # nearest ground truth vectors
                 nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt
                 cdist_mean = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
-                if len(nearest) > 1:
+                if len(nearest) > 1: # at least two vertices
                     for idx_pred, idx_gt in enumerate(nearest):
                         # if idx_pred < len(nearest) - 1:
                         # idx_gt_with_same_ins = torch.where(torch.tensor(pts_ins_list).long().cuda() == pts_ins_list[idx_gt])[0] # can have more than one
