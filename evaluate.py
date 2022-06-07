@@ -9,7 +9,7 @@ from tensorboardX import SummaryWriter
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
-from evaluation.iou import get_batch_iou
+from evaluation.iou import get_batch_iou, get_batch_cd
 from model import get_model
 from model.vectormapnet import simple_nms
 from data.visualize import colorise
@@ -81,11 +81,11 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # writer.add_image(f'{title}/vertex_heatmap_nms', colorise(heatmap_nms, 'hot', 0.0, 1.0), step, dataformats='HWC')
     
     if matches is not None and positions is not None and masks is not None:
-        # matches: [b, N, N]
+        # matches: [b, N, N+1]
         # positions: [b, N, 3], x y c
         # masks: [b, 300, 1]
         # vectors_gt: [b] list of [instance] list of dict
-        # matches_gt: [b, N, N]
+        # matches_gt: [b, N, N+1]
         # patch_size: [30.0, 60.0]
         matches = matches.detach().cpu().float().numpy()[0] # [N, N]
         positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
@@ -121,8 +121,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         matches = matches[masks == 1][:, masks_bins == 1] # masked [M, M+1]
         matches_nodust = matches[:, :-1] # [M, M]
         matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
-        matches_max = matches[:, :-1].max(1) # [M, ]
-        indices = matches_max.
+        # matches_max = matches[:, :-1].max(1) # [M, ]
+        # indices = matches_max.indices
 
         for i, pos in enumerate(positions_valid): # [3,]
             plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
@@ -181,7 +181,8 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     counter = 0
     total_intersects = 0
     total_union = 0
-    total_cdist = 0.0
+    total_cdist_p = 0.0
+    total_cdist_l = 0.0
     with torch.no_grad():
         for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
@@ -195,8 +196,11 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_intersects += intersects
             total_union += union
 
-            cdist, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
-            total_cdist += cdist
+            cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [30.0, 60.0])
+            total_cdist_p += cdist_p
+            total_cdist_l += cdist_l
+
+            _, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
 
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
@@ -209,7 +213,8 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             
             counter += 1
 
-    print(f'Chamfer distance: {float(total_cdist/counter):.4f}')
+    total_cdist_p, total_cdist_l = float(total_cdist_p/counter), float(total_cdist_l/counter)
+    print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {float((total_cdist_p + total_cdist_p)*0.5)}')
     return total_intersects / (total_union + 1e-7)
 
 
