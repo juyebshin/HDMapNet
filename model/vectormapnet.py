@@ -104,9 +104,9 @@ def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int)
     embedding_dim = embeddings.shape[1]
     if k >= n_vertices:
         pad_size = k - n_vertices # k - N
-        pad_v = torch.zeros([pad_size, 2], device=vertices.device)
-        pad_s = torch.zeros([pad_size], device=scores.device)
-        pad_dt = torch.zeros([pad_size, embedding_dim], device=embeddings.device)
+        pad_v = torch.ones([pad_size, 2], device=vertices.device)
+        pad_s = torch.ones([pad_size], device=scores.device)
+        pad_dt = torch.ones([pad_size, embedding_dim], device=embeddings.device)
         vertices, scores, embeddings = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0), torch.cat([embeddings, pad_dt], dim=0)
         mask = torch.zeros([k], dtype=torch.uint8, device=vertices.device)
         mask[:n_vertices] = 1
@@ -121,7 +121,7 @@ def attention(query, key, value, mask=None):
     scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim**.5 # [b, 4, N, N], dim**.5 == 8
     if mask is not None:
         mask = torch.einsum('bdn,bdm->bdnm', mask, mask) # [b, 1, N, N]
-        scores = scores.masked_fill(mask == 0, -1e9)
+        # scores = scores.masked_fill(mask == 0, -1e9)
     prob = torch.nn.functional.softmax(scores, dim=-1) # [b, 4, N, N]
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob # final message passing [b, 64, 4, N]
 
@@ -173,7 +173,7 @@ class AttentionalPropagation(nn.Module):
         # x, source: [b, 256(feature_dim), N]
         # attn(q, k, v)
         message = self.attn(x, source, source, mask) # [b, 256, N]
-        return self.mlp(torch.cat([x, message], dim=1))
+        return self.mlp(torch.cat([x, message], dim=1)) # [4, 512, 300] -> [4, 256, 300]
 
 class AttentionalGNN(nn.Module):
     def __init__(self, feature_dim: int, layer_names: list):
@@ -242,9 +242,9 @@ class VectorMapNet(nn.Module):
         self.register_parameter('bin_score', bin_score)
 
         self.matching_proj = nn.Sequential(
-            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1, bias=False),
+            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1),
+            # nn.ReLU(inplace=True),
+            # nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1),
         )
         self.matching = nn.Softmax(-1)
 
@@ -316,30 +316,30 @@ class VectorMapNet(nn.Module):
 
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding = self.gnn(graph_embedding) # [b, 256, N] , masks.transpose(1, 2)
+        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N] , masks.transpose(1, 2)
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
-        scores = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        scores = scores / self.feature_dim**.5 # [b, N, N]
-        b, m, n = scores.shape
+        matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
+        matches = matches / self.feature_dim**.5 # [b, N, N]
+        b, m, n = matches.shape
         bins = self.bin_score.expand(b, m, 1) # [b, N, 1]
-        scores = torch.cat([scores, bins], -1) # [b, N, N+1]
+        matches = torch.cat([matches, bins], -1) # [b, N, N+1]
 
-        # scores = self.matching_proj(F.relu(self.matching_proj(scores.T).T))
-        scores = self.matching_proj(scores)
+        # matches = self.matching_proj(F.relu(self.matching_proj(matches.T).T))
+        matches = self.matching_proj(matches)
 
         """ Matching layer (put these in a function or class) """
-        # b, m, n = scores.shape
+        # b, m, n = matches.shape
         # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
-        # one = scores.new_tensor(1)
-        # ms, ns = (m_valid*one).to(scores), (n_valid*one).to(scores) # tensor(M), tensor(M)
+        # one = matches.new_tensor(1)
+        # ms, ns = (m_valid*one).to(matches), (n_valid*one).to(matches) # tensor(M), tensor(M)
 
         # # alpha = self.bin_score
         # bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
         # # bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
         # # alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-        # couplings = torch.cat([scores, bins0], -1) # [b, N, N+1]
+        # couplings = torch.cat([matches, bins0], -1) # [b, N, N+1]
         # masks_bins = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
 
         # norm = - (ms + ns).log() # [b]
@@ -355,13 +355,13 @@ class VectorMapNet(nn.Module):
 
         # couplings = torch.cat( # [b, N+1, N+1]
         #     [
-        #         torch.cat([scores, bins0], -1), # [b, N, N+1]
+        #         torch.cat([matches, bins0], -1), # [b, N, N+1]
         #         torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
         #     ], 1)
 
         # Symmetry property
-        # scores = (scores.transpose(1, 2) + scores) * 0.5
+        # matches = (matches.transpose(1, 2) + matches) * 0.5
 
-        # return scores [b, N, N], pos_embedding (normalized -0.5~0.5 with scores) [b, N, 3], masks [b, N, 1]
+        # return matches [b, N, N], pos_embedding (normalized -0.5~0.5 with matches) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction, scores, pos_embedding, masks
+        return semantic, distance, vertex, embedding, direction, matches, pos_embedding, masks

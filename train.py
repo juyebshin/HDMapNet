@@ -173,6 +173,7 @@ def train(args):
                 if counter % args.vis_interval == 0:
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
+                    matches = matches.softmax(2)
                     visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, patch_size, counter)
                 
             counter += 1
@@ -203,7 +204,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/match_softmax')
+    parser.add_argument("--logdir", type=str, default='./runs/match_softmax_v2')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -252,9 +253,9 @@ if __name__ == '__main__':
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
     parser.add_argument("--scale_vt", type=float, default=1.0)
-    parser.add_argument("--scale_cdist", type=float, default=1.0, 
+    parser.add_argument("--scale_cdist", type=float, default=0.2, # 1.0
                         help="Scale of Chamfer distance loss")
-    parser.add_argument("--scale_match", type=float, default=1.0, 
+    parser.add_argument("--scale_match", type=float, default=0.2, # 1.0
                         help="Scale of matching loss")
 
     # distance transform config
