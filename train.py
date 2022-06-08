@@ -253,9 +253,9 @@ if __name__ == '__main__':
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
     parser.add_argument("--scale_vt", type=float, default=1.0)
-    parser.add_argument("--scale_cdist", type=float, default=0.5, # 1.0
+    parser.add_argument("--scale_cdist", type=float, default=0.2, # 1.0
                         help="Scale of Chamfer distance loss")
-    parser.add_argument("--scale_match", type=float, default=0.5, # 1.0
+    parser.add_argument("--scale_match", type=float, default=0.2, # 1.0
                         help="Scale of matching loss")
 
     # distance transform config
