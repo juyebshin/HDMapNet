@@ -12,11 +12,9 @@ from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou, get_batch_cd
 from model import get_model
 from model.vectormapnet import simple_nms
-from data.visualize import colorise
+from data.visualize import colorise, colors_plt
 from data.image import denormalize_img
 from loss import GraphLoss
-
-colors_plt = ['r', 'b', 'g']
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -93,7 +91,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
-        positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]])
+        positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]]) # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
 
         fig = plt.figure(figsize=(4, 2))
@@ -124,8 +122,9 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # matches_max = matches[:, :-1].max(1) # [M, ]
         # indices = matches_max.indices
 
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet')
+
         for i, pos in enumerate(positions_valid): # [3,]
-            plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             if matches_idx is not None:
                 match = matches_idx[i]
                 if matches[i, match] > 0.1 and match < len(matches): # 0.8 too high?
@@ -214,7 +213,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             counter += 1
 
     total_cdist_p, total_cdist_l = float(total_cdist_p/counter), float(total_cdist_l/counter)
-    print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {float((total_cdist_p + total_cdist_p)*0.5)}')
+    print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {float((total_cdist_p + total_cdist_l)*0.5)}')
     return total_intersects / (total_union + 1e-7)
 
 

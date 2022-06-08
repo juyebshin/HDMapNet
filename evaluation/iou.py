@@ -42,11 +42,10 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
 
             if len(gt_position) > 0 and len(position_valid) > 0:
                 # compute chamfer distance # [N, P] shaped tensor
-                cdist_p = torch.cdist(position_valid, gt_position) # [M, P] prediction to label
-                cdist_l = cdist_p.T # [P, M] label to prediction
+                cdist = torch.cdist(position_valid, gt_position) # [M, P] prediction to label
                 # nearest ground truth vectors
-                cdist_p_mean = torch.mean(cdist_p.min(dim=-1).values) # [N,]
-                cdist_l_mean = torch.mean(cdist_l.min(dim=-1).values) # [P,]
+                cdist_p_mean = torch.mean(cdist.min(dim=-1).values) # [N,]
+                cdist_l_mean = torch.mean(cdist.min(dim=0).values) # [P,]
             else:
                 cdist_p_mean = torch.tensor(-1.0).float().cuda()
                 cdist_l_mean = torch.tensor(-1.0).float().cuda()
