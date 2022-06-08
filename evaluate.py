@@ -128,8 +128,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                 match = matches_idx[i]
                 if matches[i, match] > 0.1 and match < len(matches): # 0.8 too high?
                     # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
-                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], matches[i, match], 
-                               cmap='jet', scale_units='xy', angles='xy', scale=1, vmin=0.0, vmax=1.0)
+                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
+                               color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
@@ -159,8 +159,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                 match = matches_idx[i]
                 if matches_gt[i, match] == 1.0 and match < len(matches_gt): # less then N
                     # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
-                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], matches_gt[i, match], 
-                               cmap='jet', scale_units='xy', angles='xy', scale=1, vmin=0.0, vmax=1.0)
+                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
+                               color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
         
         writer.add_figure(f'{title}/match_aligned', fig, step)
         plt.close()
