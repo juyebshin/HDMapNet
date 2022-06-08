@@ -122,13 +122,14 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # matches_max = matches[:, :-1].max(1) # [M, ]
         # indices = matches_max.indices
 
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet')
-
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
         for i, pos in enumerate(positions_valid): # [3,]
             if matches_idx is not None:
                 match = matches_idx[i]
                 if matches[i, match] > 0.1 and match < len(matches): # 0.8 too high?
-                    plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
+                    # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
+                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], matches[i, match], 
+                               cmap='jet', scale_units='xy', angles='xy', scale=1, vmin=0.0, vmax=1.0)
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
@@ -152,12 +153,14 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # matches_gt = matches_gt[:, :-1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
         for i, pos in enumerate(positions_valid): # [3,]
-            plt.scatter(pos[0], pos[1], s=0.5, color=colorise(pos[2], 'jet', 0.0, 1.0))
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches_gt[i, match] == 1.0 and match < len(matches_gt): # less then 300
-                    plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
+                if matches_gt[i, match] == 1.0 and match < len(matches_gt): # less then N
+                    # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
+                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], matches_gt[i, match], 
+                               cmap='jet', scale_units='xy', angles='xy', scale=1, vmin=0.0, vmax=1.0)
         
         writer.add_figure(f'{title}/match_aligned', fig, step)
         plt.close()

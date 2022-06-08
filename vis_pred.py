@@ -205,7 +205,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.axis('off')
                     plt.grid(False)
 
-                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet')
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
                     plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     plt.savefig(imname, bbox_inches='tight', dpi=400)

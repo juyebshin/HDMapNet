@@ -42,7 +42,7 @@ class VideoStreamer(object):
         self.listing = self.listing[::self.skip]
         self.maxlen = len(self.listing)
         if self.maxlen == 0:
-          raise IOError('No images were found (maybe bad \'--img_glob\' parameter?)')
+          raise IOError(f'No images were found (maybe bad \'--img_glob\' ({img_glob}) parameter?)')
     
     def read_image(self, impath, format='RGB'):
         if format == 'RGB':
