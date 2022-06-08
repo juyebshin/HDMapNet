@@ -321,8 +321,10 @@ class VectorMapNet(nn.Module):
 
         # Adjacency matrix score as inner product of all nodes
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        matches = matches / self.feature_dim**.5 # [b, N, N]
+        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]        
         b, m, n = matches.shape
+        diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
+        matches[diag_mask] = 0.0
         bins = self.bin_score.expand(b, m, 1) # [b, N, 1]
         matches = torch.cat([matches, bins], -1) # [b, N, N+1]
 
