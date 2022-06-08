@@ -10,11 +10,15 @@ from matplotlib.cm import get_cmap
 
 import tqdm
 import torch
+import torchvision
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from model import get_model
 from postprocess.vectorize import vectorize
+
+from data.image import denormalize_img
+from data.visualize import colorise, colors_plt
 
 
 def onehot_encoding(logits, dim=1):
@@ -31,6 +35,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
         [255, 255, 0], # ped_crossing
         [255, 0, 0] # contour
         ])
+    car_img = Image.open('icon/car.png')
     dist_cmap = get_cmap('magma')
     vertex_cmap = get_cmap('hot')
     model.eval()
@@ -56,7 +61,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             vmax = np.max(distance_gt)
             distance_gt = (distance_gt - vmin) / (vmax - vmin)
 
-            for si in range(distance.shape[0]): # iterate over batch
+            for si in range(imgs.shape[0]): # iterate over batch
                 # semantic: b, 4, 200, 400
                 # semantic_pred_onehot = np.argmax(semantic[si], axis=0)
                 # semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
@@ -76,6 +81,18 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                 # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 # print('saving', imname)
                 # Image.fromarray(semantic_gt_color).save(imname)
+
+                # imgs: b, 6, 3, 128, 352
+                img = imgs[si].detach().cpu().float() # 6, 3, 128, 352
+                img[3:] = torch.flip(img[3:], [3,])
+                img_grid = torchvision.utils.make_grid(img, nrow=3) # 3, 262, 1064
+                img_grid = np.array(denormalize_img(img_grid)) # 262, 1064, 3
+                impath = os.path.join(logdir, 'images')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                print('saving', imname)
+                Image.fromarray(img_grid).save(imname)
 
                 # distance: b, 3, 200, 400
                 if distance_reg:
@@ -146,6 +163,54 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                     print('saving', imname)
                     Image.fromarray(heatmap_gt_color.astype('uint8')).save(imname)
+                    
+                    # ground truth vectors
+                    vector_gt = vectors_gt[si] # [instance] list of dict
+
+                    impath = os.path.join(logdir, 'vector_gt')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+
+                    for vector in vector_gt:
+                        pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                        pts = pts[:pts_num]
+                        x = np.array([pt[0] for pt in pts])
+                        y = np.array([pt[1] for pt in pts])
+                        plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
+
+                    mask = masks[si].detach().cpu().int().numpy().squeeze(-1) # [300]
+                    position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
+                    position_valid[..., :-1] = position_valid[..., :-1] * np.array([60.0, 30.0]) # [30, 60]
+                    position_valid = position_valid[mask == 1] # [M, 3]
+                    
+                    impath = os.path.join(logdir, 'vector_pred')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.grid(False)
+
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet')
+                    plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
+
 
                 # plt.figure(figsize=(4, 2))
                 # plt.imshow(semantic[si][1], vmin=0, cmap='Blues', vmax=1)

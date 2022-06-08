@@ -2,6 +2,8 @@ from matplotlib.cm import get_cmap
 import numpy as np
 from PIL import Image
 
+colors_plt = ['r', 'b', 'g']
+
 def colorise(input, cmap, vmin=None, vmax=None):
 
     if isinstance(cmap, str):
