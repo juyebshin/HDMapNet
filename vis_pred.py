@@ -42,12 +42,14 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
+            masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
+            attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan
             # semantic[semantic < 0.1] = 0.0
 
@@ -188,7 +190,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
                     plt.close()
 
-                    mask = masks[si].detach().cpu().int().numpy().squeeze(-1) # [300]
+                    mask = masks[si] # [300]
                     position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
                     position_valid[..., :-1] = position_valid[..., :-1] * np.array([60.0, 30.0]) # [30, 60]
                     position_valid = position_valid[mask == 1] # [M, 3]
@@ -208,6 +210,31 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
                     plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
+
+                    attention = attentions[si, -1] # [4, 300, 300]
+
+                    impath = os.path.join(logdir, 'match_attention')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig=plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.grid(False)
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    for attention_head in attention: # [N, N] numpy
+                        attention_head = attention_head[mask == 1][:, mask == 1] # [M, M]
+                        if position_valid.shape[0] > 0:
+                            values, indices = attention_head.max(-1), attention_head.argmax(-1) # [M]
+                            plt.quiver(position_valid[:, 0], position_valid[:, 1], position_valid[indices, 0] - position_valid[:, 0], position_valid[indices, 1] - position_valid[:, 1],
+                                       values, cmap='jet', scale_units='xy', angles='xy', scale=1)
+                        break # only for head 0
+                    plt.colorbar()
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
                     plt.close()
 
@@ -344,7 +371,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs')
+    parser.add_argument("--logdir", type=str, default='./runs/graph_debug_v2')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -404,7 +431,7 @@ if __name__ == '__main__':
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.1)
+    parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
 

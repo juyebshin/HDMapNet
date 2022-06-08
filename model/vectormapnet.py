@@ -158,9 +158,9 @@ class MultiHeadedAttention(nn.Module):
             mask = torch.ones([batch_dim, 1, num_vertices], device=query.device) # [b, 1, N]
         query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
                              for l, x in zip(self.proj, (query, key, value))]
-        # q, k, v: [b, 64, 4, N]
-        x, _ = attention(query, key, value, mask) # [b, 64, 4, N]
-        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1))
+        # q, k, v: [b, dim, head, N]
+        x, attn = attention(query, key, value, mask) # [b, 64, head, N], [b, head, N, N]
+        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1)), attn
 
 class AttentionalPropagation(nn.Module):
     def __init__(self, feature_dim: int, num_heads: int):
@@ -172,8 +172,8 @@ class AttentionalPropagation(nn.Module):
     def forward(self, x, source, mask=None):
         # x, source: [b, 256(feature_dim), N]
         # attn(q, k, v)
-        message = self.attn(x, source, source, mask) # [b, 256, N]
-        return self.mlp(torch.cat([x, message], dim=1)) # [4, 512, 300] -> [4, 256, 300]
+        message, attention = self.attn(x, source, source, mask) # [b, 256, N], [b, 4, N, N]
+        return self.mlp(torch.cat([x, message], dim=1)), attention # [4, 512, 300] -> [4, 256, 300], [b, 4, N, N]
 
 class AttentionalGNN(nn.Module):
     def __init__(self, feature_dim: int, layer_names: list):
@@ -187,15 +187,18 @@ class AttentionalGNN(nn.Module):
         # Only self-attention is implemented for now
         # embedding: [b, 256, N]
         # mask: [b, 1, N]
+        attentions = []
         for layer, name in zip(self.layers, self.names):
             # if name == 'cross':
             #     src0, src1 = desc1, desc0
             # else:  # if name == 'self':
             #     src0, src1 = desc0, desc1
             # Attentional propagation
-            delta = layer(embedding, embedding, mask) # [b, 256, N]
+            delta, attention = layer(embedding, embedding, mask) # [b, 256, N], [b, 4, N, N]
+            attentions.append(attention)
             embedding = (embedding + delta) # [b, 256, N]
-        return embedding
+        attentions = torch.stack(attentions, dim=1) # [b, L, 4, N, N]
+        return embedding, attentions
 
 class GraphEncoder(nn.Module):
     """ Joint encoding of vertices and distance transform embeddings """
@@ -316,7 +319,7 @@ class VectorMapNet(nn.Module):
 
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N] , masks.transpose(1, 2)
+        graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
@@ -366,4 +369,4 @@ class VectorMapNet(nn.Module):
 
         # return matches [b, N, N], pos_embedding (normalized -0.5~0.5 with matches) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction, matches, pos_embedding, masks
+        return semantic, distance, vertex, embedding, direction, matches, pos_embedding, masks, attentions

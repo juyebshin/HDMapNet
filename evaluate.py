@@ -23,7 +23,7 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, matches_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, patch_size: list, step: int):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, matches_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, attentions: torch.Tensor, patch_size: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
@@ -82,12 +82,14 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # matches: [b, N, N+1]
         # positions: [b, N, 3], x y c
         # masks: [b, 300, 1]
+        # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
         # patch_size: [30.0, 60.0]
         matches = matches.detach().cpu().float().numpy()[0] # [N, N]
         positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
         masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
+        attentions = attentions.detach().cpu().float().numpy()[0, -1] # [H, N, N] attention of the last layer
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
@@ -132,6 +134,23 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                                color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
+        plt.close()
+
+        # Attention
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+        for attention in attentions: # [N, N] numpy
+            attention = attention[masks == 1][:, masks == 1] # [M, M]
+            if positions_valid.shape[0] > 0:
+                values, indices = attention.max(-1), attention.argmax(-1) # [M]
+                plt.quiver(positions_valid[:, 0], positions_valid[:, 1], positions_valid[indices, 0] - positions_valid[:, 0], positions_valid[indices, 1] - positions_valid[:, 1],
+                           values, cmap='jet', scale_units='xy', angles='xy', scale=1)
+            break # only for head 0
+        plt.colorbar()
+        writer.add_figure(f'{title}/match_attention', fig, step)
         plt.close()
 
         # Match prediction
@@ -188,7 +207,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     with torch.no_grad():
         for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -211,7 +230,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, [30.0, 60.0], step)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, attentions, [30.0, 60.0], step)
             
             counter += 1
 
