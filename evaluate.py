@@ -11,7 +11,6 @@ from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou, get_batch_cd
 from model import get_model
-from model.vectormapnet import simple_nms
 from data.visualize import colorise, colors_plt
 from data.image import denormalize_img
 from loss import GraphLoss
@@ -43,9 +42,9 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_image(f'{title}/distance_transform_pred', colorise(dt[0], 'magma'), step, dataformats='NHWC')
     
     if heatmap is not None:
-        vertex = onehot_encoding(heatmap)
+        # vertex = onehot_encoding(heatmap)
         heatmap = heatmap.detach().cpu().float().numpy()[0] # 65, 25, 50
-        vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
+        # vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
         vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
 
         nodust_gt = vt_mask[:-1, :, :] # 64, 25, 50
@@ -60,23 +59,19 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         heatmap = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
         heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
         heatmap = np.reshape(heatmap, [Hc*8, Wc*8]) # 200, 400
-        # heatmap_nms = simple_nms(torch.from_numpy(heatmap).unsqueeze(0), 4).squeeze(0) # 200, 400
 
-        nodust = vertex[:-1, :, :] # 64, 25, 50
-        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-        vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
-        vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
-        vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
+        # nodust = vertex[:-1, :, :] # 64, 25, 50
+        # nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
+        # vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
+        # vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
+        # vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
 
         writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot', 0.0, 1.0), step, dataformats='HWC')
-        writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
-        writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        # writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        # writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
         heatmap[heatmap < 0.015] = 0.0
         heatmap[heatmap > 0.0] = 1.0
         writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
-        # heatmap_nms[heatmap_nms < 0.015] = 0.0
-        # heatmap_nms[heatmap_nms > 0.0] = 1.0
-        # writer.add_image(f'{title}/vertex_heatmap_nms', colorise(heatmap_nms, 'hot', 0.0, 1.0), step, dataformats='HWC')
     
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N, N+1]
