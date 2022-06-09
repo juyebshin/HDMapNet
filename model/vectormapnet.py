@@ -332,7 +332,7 @@ class VectorMapNet(nn.Module):
         matches = torch.cat([matches, bins], -1) # [b, N, N+1]
 
         # matches = self.matching_proj(F.relu(self.matching_proj(matches.T).T))
-        matches = self.matching_proj(matches)
+        # matches = self.matching_proj(matches)
 
         """ Matching layer (put these in a function or class) """
         # b, m, n = matches.shape
