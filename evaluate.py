@@ -182,7 +182,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # Match gt
         fig = plt.figure()
         plt.grid(False)
-        plt.imshow(matches_gt, cmap='hot', interpolation='nearest') # [M, M]
+        plt.imshow(matches_gt, cmap='hot', interpolation='nearest') # [M, M] !! row-wise sum is not always 1??
         plt.colorbar()
         writer.add_figure(f'{title}/match_gt', fig, step)
         plt.close()

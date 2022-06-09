@@ -168,6 +168,8 @@ def train(args):
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
                 writer.add_scalar('train/cdist_loss', cdist_loss, counter)
                 writer.add_scalar('train/match_loss', match_loss, counter)
+                for bi, mask in enumerate(masks):
+                    writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0:
@@ -204,7 +206,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/vis_attention')
+    parser.add_argument("--logdir", type=str, default='./runs/match_loss_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -253,9 +255,9 @@ if __name__ == '__main__':
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
     parser.add_argument("--scale_vt", type=float, default=1.0)
-    parser.add_argument("--scale_cdist", type=float, default=0.2, # 1.0
+    parser.add_argument("--scale_cdist", type=float, default=0.0, # 1.0
                         help="Scale of Chamfer distance loss")
-    parser.add_argument("--scale_match", type=float, default=0.2, # 1.0
+    parser.add_argument("--scale_match", type=float, default=0.05, # 1.0
                         help="Scale of matching loss")
 
     # distance transform config
