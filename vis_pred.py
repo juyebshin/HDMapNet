@@ -48,6 +48,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
+            matches = matches.cpu().float().numpy() # b, N, N+1
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
             attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan
@@ -190,10 +191,17 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
                     plt.close()
 
+                    # vector prediction
                     mask = masks[si] # [300]
                     position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
                     position_valid[..., :-1] = position_valid[..., :-1] * np.array([60.0, 30.0]) # [30, 60]
                     position_valid = position_valid[mask == 1] # [M, 3]
+
+                    # matches
+                    mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
+                    match = matches[si] # [N, N+1]
+                    match = match[mask == 1][:, mask_bin == 1] # [M, M+1]
+                    match_idx = match.argmax(1) if len(match) > 0 else None # [M, ] # [M, 1]
                     
                     impath = os.path.join(logdir, 'vector_pred')
                     if not os.path.exists(impath):
@@ -208,6 +216,12 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.grid(False)
 
                     plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    for i, pos in enumerate(position_valid): # [3,]
+                        if match_idx is not None:
+                            next = match_idx[i]
+                            if next < len(match): # not dustbin
+                                plt.quiver(pos[0], pos[1], position_valid[next][0] - pos[0], position_valid[next][1] - pos[1], 
+                                           color=colorise(match[i, next], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
                     plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
