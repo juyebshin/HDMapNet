@@ -243,12 +243,6 @@ class VectorMapNet(nn.Module):
 
         bin_score = nn.Parameter(torch.tensor(1.))
         self.register_parameter('bin_score', bin_score)
-
-        self.matching_proj = nn.Sequential(
-            nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1),
-            # nn.ReLU(inplace=True),
-            # nn.Conv1d(self.max_vertices, self.max_vertices, kernel_size=1),
-        )
         self.matching = nn.Softmax(-1)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
