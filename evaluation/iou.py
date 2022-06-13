@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 
 def get_batch_iou(pred_map, gt_map):
@@ -38,7 +39,7 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
                 pts = pts[:pts_num] # [p, 2] array
                 [pts_list.append(pt) for pt in pts]
             
-            gt_position = torch.tensor(pts_list).float().cuda()
+            gt_position = torch.tensor(np.array(pts_list)).float().cuda()
 
             if len(gt_position) > 0 and len(position_valid) > 0:
                 # compute chamfer distance # [N, P] shaped tensor

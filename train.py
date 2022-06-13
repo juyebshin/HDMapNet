@@ -175,7 +175,7 @@ def train(args):
                 if counter % args.vis_interval == 0:
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
-                    matches = matches.softmax(2)
+                    matches = matches.exp()
                     visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, attentions, patch_size, counter)
                 
             counter += 1
@@ -206,7 +206,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/match_loss_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/match_sinkhorn_forward')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -272,7 +272,7 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)

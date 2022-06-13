@@ -48,7 +48,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
-            matches = matches.softmax(2).cpu().float().numpy() # b, N, N+1
+            matches = matches.exp().cpu().float().numpy() # b, N+1, N+1
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
             attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan

@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import numpy as np
+
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=1, gamma=2, reduce='mean'):
@@ -80,12 +82,14 @@ class GraphLoss(nn.Module):
         self.reduction = reduction
 
         self.ce_fn = torch.nn.CrossEntropyLoss()
+        self.nll_fn = torch.nn.NLLLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
-        # matches: [b, N, N]
+        # matches: [b, N+1, N+1]
         # positions: [b, N, 3], x y c
         # masks: [b, N, 1]
         # vectors_gt: [b] list of [instance] list of dict
+        # matches = matches.exp()
 
         # iterate in batch
         cdist_list = []
@@ -107,8 +111,8 @@ class GraphLoss(nn.Module):
                 [pts_list.append(pt) for pt in pts]
                 [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
             
-            position_gt = torch.tensor(pts_list).float().cuda() # [P, 2] shaped tensor
-            match_gt = torch.zeros_like(match) # [N, N+1]
+            position_gt = torch.tensor(np.array(pts_list)).float().cuda() # [P, 2] shaped tensor
+            match_gt = torch.zeros_like(match) # [N+1, N+1]
 
             if len(position_gt) > 0 and len(position_valid) > 0:            
                 # compute chamfer distance # [N, P] shaped tensor
@@ -117,6 +121,7 @@ class GraphLoss(nn.Module):
                 nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt
                 cdist_mean = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
                 if len(nearest) > 1: # at least two vertices
+                    dist_map = torch.cdist(position_valid, position_valid)
                     for idx_pred, idx_gt in enumerate(nearest):
                         # if idx_pred < len(nearest) - 1:
                         # idx_gt_with_same_ins = torch.where(torch.tensor(pts_ins_list).long().cuda() == pts_ins_list[idx_gt])[0] # can have more than one
@@ -136,24 +141,49 @@ class GraphLoss(nn.Module):
                         # match_gt[idx_pred, i_prev] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_prev] else 0.0
                         # match_gt[idx_pred, i_next] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_next] else 0.0
                     
-                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
-                    match = match[mask == 1][:, mask_bins == 1] # [M, M+1]
-                    # match_gt = torch.triu(match_gt, 1)
-                    # match_gt = torch.clamp(match_gt.T + match_gt, max=1.0) # Symmetry constraint
-                    match_gt_sum = match_gt.sum(1) # [N]
-                    match_gt[match_gt_sum == 0, -1] = 1.0
-                    assert torch.min(match_gt.sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt.sum(1))}"
-                    assert torch.max(match_gt.sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt.sum(1))}"
-                    match_gt_valid = match_gt[mask == 1][:, mask_bins == 1] # [M, M+1]
-                    assert torch.min(match_gt_valid.sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid.sum(1))}"
-                    assert torch.max(match_gt_valid.sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid.sum(1))}"
-                    # couplings = torch.cat([torch.cat([match_gt_valid, bin0], -1), torch.cat([bin1, alpha], -1)], 0) # [M+1, M+1]
 
-                    # match_gt_valid[range(len(match_gt_valid)), range(len(match_gt_valid))] = match.diagonal() # ignore diagonal entities
+                    match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
+                    # leave only one match along row dimension with closest vector
+                    multi_cols, = torch.where(match_gt_sum_backward > 1) # [num_cols]
+                    for multi_col in multi_cols:
+                        rows, = torch.where(match_gt[:, multi_col] > 0)
+                        match_gt[rows, multi_col] = 0.0
+                        _, min_row_idx = dist_map[rows, multi_col].min(0)
+                        match_gt[rows[min_row_idx], multi_col] = 1.0
+                    
+                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
+                    match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
+                    match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
+                    assert torch.min(match_gt[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt[:-1].sum(1))}"
+                    assert torch.max(match_gt[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt[:-1].sum(1))}"
+
+                    match_gt_sum_backward = match_gt[:, :-1].sum(0)
+                    match_gt[:, :-1][-1, match_gt_sum_backward == 0] = 1.0
+                    assert torch.min(match_gt[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt[:, :-1].sum(0))}"
+                    assert torch.max(match_gt[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt[:, :-1].sum(0))}"
+
+                    match_valid = match[mask_bins == 1][:, mask_bins == 1] # [M+1, M+1]
+                    match_gt_valid = match_gt[mask_bins == 1][:, mask_bins == 1] # [M, M+1]
+                    assert torch.min(match_gt_valid[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid[:-1].sum(1))}"
+                    assert torch.max(match_gt_valid[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid[:-1].sum(1))}"
+                    assert torch.min(match_gt_valid[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt_valid[:, :-1].sum(0))}"
+                    assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
+
                     # add minibatch dimension and class first
-                    match = match.transpose(0, 1).unsqueeze(0) # [1, M+1, M]
-                    match_gt_valid = match_gt_valid.transpose(0, 1).unsqueeze(0) # [1, M+1, M]
-                    match_loss = self.ce_fn(match, match_gt_valid)
+                    match_valid = match_valid.unsqueeze(0) # [1, M+1, M+1]
+                    match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M+1, M+1]
+
+                    # backward col -> row
+                    match_gt_valid_backward = match_gt_valid.argmax(1) # col -> row [1, M+1]
+                    match_loss_backward = self.nll_fn(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
+
+                    # forward row -> col
+                    match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
+                    match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
+                    match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
+
+                    # match_loss = (match_loss_forward + match_loss_backward) * 0.5
+                    match_loss = match_loss_forward
                 else:
                     match_loss = torch.tensor(0.0).float().cuda()
             else:

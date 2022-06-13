@@ -1,3 +1,4 @@
+from tkinter.messagebox import NO
 from turtle import forward
 from copy import deepcopy
 import torch
@@ -126,6 +127,43 @@ def attention(query, key, value, mask=None):
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob # final message passing [b, 64, 4, N]
 
 
+def log_sinkhorn_iterations(Z, log_mu, log_nu, iters: int):    
+    """ Perform Sinkhorn Normalization in Log-space for stability"""
+    u, v = torch.zeros_like(log_mu), torch.zeros_like(log_nu)
+    for _ in range(iters):
+        u = log_mu - torch.logsumexp(Z + v.unsqueeze(1), dim=2)
+        v = log_nu - torch.logsumexp(Z + u.unsqueeze(2), dim=1)
+    return Z + u.unsqueeze(2) + v.unsqueeze(1)
+
+def log_optimal_transport(scores, alpha, iters: int):
+    """ Perform Differentiable Optimal Transport in Log-space for stability"""
+    b, m, n = scores.shape # b, N, N
+    diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
+    scores[diag_mask] = 0.0
+    # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
+    one = scores.new_tensor(1)
+    ms, ns = (m*one).to(scores), (n*one).to(scores) # [b] same as m_valid, n_valid
+
+    bins0 = alpha.expand(b, m, 1) # [b, N, 1]
+    bins1 = alpha.expand(b, 1, n) # [b, 1, N]
+    alpha = alpha.expand(b, 1, 1) # [b, 1, 1]
+
+    couplings = torch.cat( # [b, N+1, N+1]
+        [
+            torch.cat([scores, bins0], -1), # [b, N, N+1]
+            torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+        ], 1)
+    # masks_bins = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
+
+    norm = - (ms + ns).log() # [b]
+    log_mu = torch.cat([norm.expand(m), ns.log()[None] + norm]) # [N+1]
+    log_nu = torch.cat([norm.expand(n), ms.log()[None] + norm]) # [N+1]
+    log_mu, log_nu = log_mu[None].expand(b, -1), log_nu[None].expand(b, -1) # [b, N+1]
+
+    Z = log_sinkhorn_iterations(couplings, log_mu, log_nu, iters)
+    Z = Z - norm  # multiply probabilities by M+N
+    return Z
+
 
 class ArgMax(torch.autograd.Function):
     @staticmethod
@@ -216,7 +254,7 @@ class GraphEncoder(nn.Module):
         return self.encoder(input) # [b, 256, N]
 
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True) -> None:
+    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, sinkhorn_iters=100) -> None:
         super(VectorMapNet, self).__init__()
 
         self.cell_size = data_conf['cell_size']
@@ -227,6 +265,7 @@ class VectorMapNet(nn.Module):
         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
         self.max_vertices = data_conf['num_vectors'] # 300
         self.feature_dim = data_conf['feature_dim'] # 256
+        self.sinkhorn_iters = sinkhorn_iters
         # self.GNN_layers = gnn_layers
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
@@ -243,7 +282,6 @@ class VectorMapNet(nn.Module):
 
         bin_score = nn.Parameter(torch.tensor(1.))
         self.register_parameter('bin_score', bin_score)
-        self.matching = nn.Softmax(-1)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, embedding, direction are not used
@@ -318,49 +356,15 @@ class VectorMapNet(nn.Module):
 
         # Adjacency matrix score as inner product of all nodes
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]        
-        b, m, n = matches.shape
-        diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
-        matches[diag_mask] = 0.0
-        bins = self.bin_score.expand(b, m, 1) # [b, N, 1]
-        matches = torch.cat([matches, bins], -1) # [b, N, N+1]
-
-        # matches = self.matching_proj(F.relu(self.matching_proj(matches.T).T))
-        # matches = self.matching_proj(matches)
-
-        """ Matching layer (put these in a function or class) """
-        # b, m, n = matches.shape
-        # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
-        # one = matches.new_tensor(1)
-        # ms, ns = (m_valid*one).to(matches), (n_valid*one).to(matches) # tensor(M), tensor(M)
-
-        # # alpha = self.bin_score
-        # bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-        # # bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-        # # alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-        # couplings = torch.cat([matches, bins0], -1) # [b, N, N+1]
-        # masks_bins = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
-
-        # norm = - (ms + ns).log() # [b]
-        # log_mu = torch.cat([norm.unsqueeze(-1).expand(-1, m), (ns.log() + norm).unsqueeze(-1)], -1) # [b, N+1]
-        # log_nu = torch.cat([norm.unsqueeze(-1).expand(-1, n), (ms.log() + norm).unsqueeze(-1)], -1) # [b, N+1]
-
-        # u, v = torch.zeros_like(log_mu), torch.zeros_like(log_nu) # [b, N+1]
-        # for _ in range(100):
-        #     u = log_mu[:, :-1] - torch.logsumexp(couplings + v.unsqueeze(1), dim=2) # [b, N]
-
-        # couplings = couplings + u.unsqueeze(2) # [b, N, N+1]
-        # couplings = couplings - norm
-
-        # couplings = torch.cat( # [b, N+1, N+1]
-        #     [
-        #         torch.cat([matches, bins0], -1), # [b, N, N+1]
-        #         torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-        #     ], 1)
+        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
+        
+        # Matching layer
+        matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
+        # matches.exp() should be probability
 
         # Symmetry property
         # matches = (matches.transpose(1, 2) + matches) * 0.5
 
         # return matches [b, N, N], pos_embedding (normalized -0.5~0.5 with matches) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction, matches, pos_embedding, masks, attentions
+        return semantic, distance, vertex, embedding, direction, (matches), pos_embedding, masks, attentions

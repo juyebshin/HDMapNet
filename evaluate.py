@@ -74,20 +74,20 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
     
     if matches is not None and positions is not None and masks is not None:
-        # matches: [b, N, N+1]
+        # matches: [b, N+1, N+1]
         # positions: [b, N, 3], x y c
         # masks: [b, 300, 1]
         # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
         # patch_size: [30.0, 60.0]
-        matches = matches.detach().cpu().float().numpy()[0] # [N, N]
+        matches = matches.detach().cpu().float().numpy()[0] # [N+1, N+1]
         positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
         masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
         attentions = attentions.detach().cpu().float().numpy()[0, -1] # [H, N, N] attention of the last layer
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
-        matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
+        matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]]) # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
 
@@ -113,7 +113,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
 
         # matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
-        matches = matches[masks == 1][:, masks_bins == 1] # masked [M, M+1]
+        matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
         matches_nodust = matches[:, :-1] # [M, M]
         matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
         # matches_max = matches[:, :-1].max(1) # [M, ]
@@ -123,7 +123,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         for i, pos in enumerate(positions_valid): # [3,]
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches[i, match] > 0.1 and match < len(matches): # 0.8 too high?
+                if matches[i, match] > 0.1 and match < len(matches)-1: # 0.8 too high?
                     # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
                     plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
                                color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
@@ -163,7 +163,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
 
         # matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks_bins == 1] # [M, M] upper triangle matrix without diagonal
-        matches_gt = matches_gt[masks == 1][:, masks_bins == 1] # [M, M+1]
+        matches_gt = matches_gt[masks_bins == 1][:, masks_bins == 1] # [M+1, M+1]
         # matches_gt = matches_gt[:, :-1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
@@ -171,7 +171,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         for i, pos in enumerate(positions_valid): # [3,]
             if matches_idx is not None:
                 match = matches_idx[i]
-                if matches_gt[i, match] == 1.0 and match < len(matches_gt): # less then N
+                if matches_gt[i, match] == 1.0 and match < len(matches_gt)-1: # less then N
                     # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
                     plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
                                color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
@@ -206,7 +206,8 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
-            heatmap = vertex.softmax(1).cuda() # b, 65, 25, 50
+            heatmap = vertex.softmax(1) # b, 65, 25, 50
+            matches = matches.exp() # b, N+1, N+1
             vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
             intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
             total_intersects += intersects
@@ -221,7 +222,6 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
                         distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
-                        matches = matches.softmax(2)
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
