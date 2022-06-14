@@ -182,8 +182,8 @@ class GraphLoss(nn.Module):
                     match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
                     match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
 
-                    # match_loss = (match_loss_forward + match_loss_backward) * 0.5
-                    match_loss = match_loss_forward
+                    match_loss = (match_loss_forward + match_loss_backward) * 0.5
+                    # match_loss = match_loss_forward
                 else:
                     match_loss = torch.tensor(0.0).float().cuda()
             else:

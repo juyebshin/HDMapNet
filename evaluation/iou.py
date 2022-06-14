@@ -63,4 +63,5 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
         batch_cdist_l_mean = (batch_cdist_l*mask_l).sum(dim=0) / mask_l.sum(dim=0)
     return batch_cdist_p_mean, batch_cdist_l_mean
 
-
+def get_batch_vector_iou(pred_vectors: torch.Tensor, matches: torch.Tensor, masks: torch.Tensor, gt_map: torch.Tensor, thickness: int = 5):
+    return None

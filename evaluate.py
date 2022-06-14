@@ -4,6 +4,7 @@ import tqdm
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import torchvision
 from tensorboardX import SummaryWriter
 
@@ -76,20 +77,44 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N+1, N+1]
         # positions: [b, N, 3], x y c
-        # masks: [b, 300, 1]
+        # masks: [b, N, 1]
         # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
         # patch_size: [30.0, 60.0]
-        matches = matches.detach().cpu().float().numpy()[0] # [N+1, N+1]
-        positions = positions.detach().cpu().float().numpy()[0] # [N, 3]
-        masks = masks.detach().cpu().int().numpy()[0].squeeze(-1) # [N]
-        attentions = attentions.detach().cpu().float().numpy()[0, -1] # [H, N, N] attention of the last layer
+        matches = matches[0].detach().cpu().float().numpy() # [N+1, N+1]
+        positions = positions[0].detach().cpu().float().numpy() # [N, 3]
+        masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
+        attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
         positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]]) # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
+
+        # Vector prediction
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+
+        matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
+        matches_nodust = matches[:-1, :-1] # [M, M]
+        rows, cols = np.where(matches_nodust > 0.2)
+        for row, col in zip(rows, cols):
+            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], '-', c=cm.jet(matches_nodust[row, col]))
+        # matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
+        # for i, pos in enumerate(positions_valid): # [3,]
+        #     if matches_idx is not None:
+        #         match = matches_idx[i]
+        #         if matches[i, match] > 0.1 and match < len(matches)-1: # 0.8 too high?
+        #             # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
+        #             plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
+        #                        color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
+        
+        writer.add_figure(f'{title}/vector_pred', fig, step)
+        plt.close()
 
         fig = plt.figure(figsize=(4, 2))
         plt.xlim(-30, 30)
@@ -104,31 +129,6 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
             plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
         
         writer.add_figure(f'{title}/vector_gt', fig, step)
-        plt.close()
-
-        # Vector prediction
-        fig = plt.figure(figsize=(4, 2))
-        plt.xlim(-30, 30)
-        plt.ylim(-15, 15)
-        plt.axis('off')
-
-        # matches = np.triu(matches, 1)[masks == 1] # [N, N] upper triangle matrix without diagonal
-        matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
-        matches_nodust = matches[:, :-1] # [M, M]
-        matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
-        # matches_max = matches[:, :-1].max(1) # [M, ]
-        # indices = matches_max.indices
-
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-        for i, pos in enumerate(positions_valid): # [3,]
-            if matches_idx is not None:
-                match = matches_idx[i]
-                if matches[i, match] > 0.1 and match < len(matches)-1: # 0.8 too high?
-                    # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches[i, match], 'jet', 0.0, 1.0))
-                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
-                               color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
-        
-        writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
 
         # Attention
@@ -174,7 +174,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                 if matches_gt[i, match] == 1.0 and match < len(matches_gt)-1: # less then N
                     # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
                     plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
-                               color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
+                               color=cm.jet(matches_gt[i, match]), scale_units='xy', angles='xy', scale=1)
         
         writer.add_figure(f'{title}/match_aligned', fig, step)
         plt.close()
