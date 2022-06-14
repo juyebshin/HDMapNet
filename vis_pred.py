@@ -48,7 +48,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
-            matches = matches.exp().cpu().float().numpy() # b, N+1, N+1
+            matches = matches.exp().cpu().float().numpy() # b, N+1, N+1 for sinkhorn
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
             attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan
@@ -202,7 +202,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     match = matches[si] # [N, N+1]
                     match = match[mask == 1][:, mask_bin == 1] # [M, M+1]
                     match_idx = match.argmax(1) if len(match) > 0 else None # [M, ] # [M, 1]
-                    match = match[:, :-1] # no dust
+                    match = match[:, :-1] # [M, M] no dust
                     rows, cols = np.where(match > 0.2)
                     
                     impath = os.path.join(logdir, 'vector_pred')
