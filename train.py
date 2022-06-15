@@ -103,11 +103,6 @@ def train(args):
             vertex_gt = vertex_gt.cuda().float()
 
             vt_loss = vt_loss_fn(vertex, vertex_gt)
-            
-            if args.segmentation:
-                seg_loss = loss_fn(semantic, semantic_gt)
-            else:
-                seg_loss = 0
 
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
@@ -131,7 +126,7 @@ def train(args):
             else:
                 dt_loss = 0
             
-            cdist_loss, match_loss, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
+            cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
             
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
@@ -176,7 +171,7 @@ def train(args):
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, attentions, patch_size, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, patch_size, counter)
                 
             counter += 1
 
@@ -206,7 +201,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/match_vis_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/vector_cls_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -249,7 +244,7 @@ if __name__ == '__main__':
     parser.add_argument('--angle_class', type=int, default=36)
 
     # loss config
-    parser.add_argument("--scale_seg", type=float, default=1.0)
+    parser.add_argument("--scale_seg", type=float, default=0.05) # vector segmentation
     parser.add_argument("--scale_var", type=float, default=1.0)
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)

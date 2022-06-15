@@ -7,29 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from .hdmapnet import HDMapNet
-from .utils import onehot_encoding
-
-def softargmax2d(input: Tensor, beta=100):
-    *_, h, w = input.shape # b, c, h, w
-
-    input = input.reshape(*_, h * w) # b, c, h*w
-    input = F.softmax(beta * input, dim=-1) # b, c, h*w softmax over h*w dim
-
-    indices_c, indices_r = np.meshgrid( # column, row
-        np.linspace(0, 1, w),
-        np.linspace(0, 1, h),
-        indexing='xy'
-    ) # (h, w) col, row mesh grid
-
-    indices_r = torch.tensor(np.reshape(indices_r, (-1, h * w)), device=input.device) # 1, h*w
-    indices_c = torch.tensor(np.reshape(indices_c, (-1, h * w)), device=input.device) # 1, h*w
-
-    result_r = torch.sum((h - 1) * input * indices_r, dim=-1) # b, c
-    result_c = torch.sum((w - 1) * input * indices_c, dim=-1) # b, c
-
-    result = torch.stack([result_r, result_c], dim=-1)
-
-    return result # b, c, 2
+from .gcn import GCN
 
 def MLP(channels: list, do_bn=True):
     """ MLP """
@@ -74,13 +52,14 @@ def sample_dt(vertices, distance: Tensor, threshold: int, s: int = 8):
     """ Extract distance transform patches around vertices """
     # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
     # distance: (b, 3, 200, 400) tensor
-    embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
-    embedding = embedding / threshold # 0 ~ 10 -> 0 ~ 1 normalize
-    b, h, w = embedding.shape # b, 200, 400
+    # embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
+    embedding = distance / threshold # 0 ~ 10 -> 0 ~ 1 normalize
+    b, c, h, w = embedding.shape # b, 3, 200, 400
     hc, wc = int(h/s), int(w/s) # 25, 50
-    embedding = embedding.reshape(b, hc, s, wc, s).permute(0, 1, 3, 2, 4) # b, 25, 8, 50, 8 -> b, 25, 50, 8, 8
-    embedding = embedding.reshape(b, hc, wc, s*s) # b, 25, 50, 64
-    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 64] tensor
+    embedding = embedding.reshape(b, c, hc, s, wc, s).permute(0, 1, 2, 4, 3, 5) # b, c, 25, 8, 50, 8 -> b, c, 25, 50, 8, 8
+    embedding = embedding.reshape(b, c, hc, wc, s*s).permute(0, 2, 3, 1, 4) # b, c, 25, 50, 64 -> b, 25, 50, 3, 64
+    embedding = embedding.reshape(b, hc, wc, -1) # b, 25, 50, 192
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
     return embedding
 
 def normalize_vertices(vertices: Tensor, image_shape):
@@ -257,6 +236,7 @@ class VectorMapNet(nn.Module):
     def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, sinkhorn_iters=100) -> None:
         super(VectorMapNet, self).__init__()
 
+        self.num_classes = data_conf['num_channels'] # 4
         self.cell_size = data_conf['cell_size']
         self.dist_threshold = data_conf['dist_threshold']
         self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
@@ -276,21 +256,23 @@ class VectorMapNet(nn.Module):
 
         # Graph neural network
         self.venc = GraphEncoder(self.feature_dim, [3, 32, 64, 128, 256]) # 3 -> 256
-        self.dtenc = GraphEncoder(self.feature_dim, [self.cell_size*self.cell_size, 64, 128, 256]) # 64 -> 256
+        self.dtenc = GraphEncoder(self.feature_dim, [(self.num_classes-1)*self.cell_size*self.cell_size, 64, 128, 256]) # 192 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
         bin_score = nn.Parameter(torch.tensor(1.))
         self.register_parameter('bin_score', bin_score)
 
-    def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
-        """ semantic, embedding, direction are not used
+        # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
+        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
 
+    def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+        """ semantic, instance, direction are not used
         @ vertex: (b, 65, 25, 50)
         @ distance: (b, 3, 200, 500)
         """
         
-        semantic, distance, vertex, embedding, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
+        semantic, distance, vertex, instance, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
@@ -330,12 +312,6 @@ class VectorMapNet(nn.Module):
         # Extract distance transform
         dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
 
-        # Discard vertices near the image borders
-        # vertices, scores = list(zip(*[
-        #     remove_borders(v, s, self.cell_size, h*self.cell_size, w*self.cell_size)
-        #     for v, s in zip(vertices, scores)
-        # ])) # tuple
-
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
                 top_k_vertices(v, s, d, self.max_vertices)
@@ -352,6 +328,7 @@ class VectorMapNet(nn.Module):
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
+        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
@@ -362,9 +339,8 @@ class VectorMapNet(nn.Module):
         matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
         # matches.exp() should be probability
 
-        # Symmetry property
-        # matches = (matches.transpose(1, 2) + matches) * 0.5
+        # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 
         # return matches [b, N, N], pos_embedding (normalized -0.5~0.5 with matches) [b, N, 3], masks [b, N, 1]
 
-        return semantic, distance, vertex, embedding, direction, (matches), pos_embedding, masks, attentions
+        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), pos_embedding, masks, attentions

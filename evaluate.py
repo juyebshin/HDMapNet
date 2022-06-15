@@ -23,7 +23,7 @@ def onehot_encoding(logits, dim=1):
     one_hot.scatter_(dim, max_idx, 1) # b, C, 200, 400 one hot
     return one_hot
 
-def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, matches_gt: list, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, attentions: torch.Tensor, patch_size: list, step: int):
+def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, attentions: torch.Tensor, patch_size: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
@@ -186,6 +186,35 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.colorbar()
         writer.add_figure(f'{title}/match_gt', fig, step)
         plt.close()
+    
+    if semantics is not None and semantics_gt is not None:
+        # semantics: [b, 3, N]
+        # semantics_gt: [b, 3, N]
+        semantic = semantics[0].exp().detach().cpu().float().numpy() # [3, N]
+        semantic_gt = semantics_gt[0].detach().cpu().float().numpy().astype('uint8') # [3, N]
+        
+        semantic_onehot = semantic.argmax(0)[masks == 1] # [M]
+        semantic_gt_onehot = semantic_gt.argmax(0)[masks == 1] # [M]
+
+        # Semantic prediction
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=1.0, c=[colors_plt[c] for c in semantic_onehot])
+        
+        writer.add_figure(f'{title}/vector_semantic_pred', fig, step)
+        plt.close()
+        
+        # Semantic gt
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=1.0, c=[colors_plt[c] for c in semantic_gt_onehot])
+        
+        writer.add_figure(f'{title}/vector_semantic_gt', fig, step)
+        plt.close()
 
 
 
@@ -217,7 +246,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_cdist_p += cdist_p
             total_cdist_l += cdist_l
 
-            _, _, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
+            _, _, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
 
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
@@ -225,7 +254,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, distance, heatmap, matches, positions, masks, attentions, [30.0, 60.0], step)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, [30.0, 60.0], step)
             
             counter += 1
 
