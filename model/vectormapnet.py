@@ -90,7 +90,7 @@ def normalize_vertices(vertices: Tensor, image_shape):
     one = vertices.new_tensor(1) # [1], data 1
     size = torch.stack([one*width, one*height])[None] # [1, 2], data [400, 200]
     center = size / 2 # [1, 2], data [200, 100]
-    return (vertices - center) / size # [N, 2] values [-0.5, 0.5]
+    return (vertices - center + 0.5) / size # [N, 2] values [-0.5, 0.5]
 
 def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
     """
