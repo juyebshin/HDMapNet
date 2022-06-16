@@ -66,10 +66,10 @@ def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
     # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
     _, height, width = image_shape # b, h, w
-    one = vertices.new_tensor(1) # [1], data 1
-    size = torch.stack([one*width, one*height])[None] # [1, 2], data [400, 200]
-    center = size / 2 # [1, 2], data [200, 100]
-    return (vertices - center) / size # [N, 2] values [-0.5, 0.5]
+    one = vertices.new_tensor(1) # [1], values 1
+    size = torch.stack([one*width, one*height])[None] # [1, 2], values [400, 200]
+    center = size / 2 # [1, 2], values [200, 100]
+    return (vertices - center + 0.5) / size # [N, 2] values [-0.5, 0.4975] or [-0.49875, 0.49875]
 
 def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
     """

@@ -15,7 +15,7 @@ import torchvision
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from model import get_model
-from postprocess.vectorize import vectorize
+from postprocess.vectorize import vectorize, vectorize_graph
 
 from data.image import denormalize_img
 from data.visualize import colorise, colors_plt
@@ -356,6 +356,23 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 plt.savefig(img_name)
                 plt.close()
 
+def vis_vectormapnet(model, val_loader, data_conf):
+    model.eval()
+    car_img = Image.open('icon/car.png')
+    xbound, ybound = data_conf['xbound'], data_conf['ybound']
+    patch_size = [ybound[1]-ybound[0], xbound[1]-xbound[0]] # [30.0, 60.0]
+
+    with torch.no_grad():
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
+            
+            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+                                                post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
+                                                lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+            
+            for si in range(imgs.shape[0]):
+                vectorize_graph(positions, matches, semantic, masks, patch_size)
+
+
 
 def main(args):
     data_conf = {
@@ -383,12 +400,14 @@ def main(args):
     vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     if args.instance_seg and args.direction_pred:
         vis_vector(model, val_loader, args.angle_class, args.logdir)
+    # if args.model == 'VectorMapNet_cam':
+    #     vis_vectormapnet(model, val_loader, data_conf)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/graph_debug_v2')
+    parser.add_argument("--logdir", type=str, default='./runs/match_sinkhorn_both')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -408,7 +427,7 @@ if __name__ == '__main__':
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default='./runs/graph_debug_v2/model_best.pt')
+    parser.add_argument('--modelf', type=str, default='./runs/match_sinkhorn_both/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)

@@ -10,9 +10,9 @@ from postprocess.vectorize import vectorize
 
 
 def gen_dx_bx(xbound, ybound):
-    dx = [row[2] for row in [xbound, ybound]]
-    bx = [row[0] + row[2] / 2.0 for row in [xbound, ybound]]
-    nx = [(row[1] - row[0]) / row[2] for row in [xbound, ybound]]
+    dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
+    bx = [row[0] + row[2] / 2.0 for row in [xbound, ybound]] # [-29.925, -14.925]
+    nx = [(row[1] - row[0]) / row[2] for row in [xbound, ybound]] # [400, 200]
     return dx, bx, nx
 
 def export_to_json(model, val_loader, angle_class, args):

@@ -37,9 +37,9 @@ def get_pred_top2_direction(direction, dim=1):
 
 
 def vectorize(segmentation, embedding, direction, angle_class):
-    segmentation = segmentation.softmax(0)
-    embedding = embedding.cpu()
-    direction = direction.permute(1, 2, 0).cpu()
+    segmentation = segmentation.softmax(0) # [4, 200, 400]
+    embedding = embedding.cpu() # [16, 200, 400]
+    direction = direction.permute(1, 2, 0).cpu() # [200, 400, 37]
     direction = get_pred_top2_direction(direction, dim=-1)
 
     max_pool_1 = nn.MaxPool2d((1, 5), padding=(0, 2), stride=1)
@@ -99,3 +99,21 @@ def vectorize(segmentation, embedding, direction, angle_class):
             line_types.append(i-1)
 
     return simplified_coords, confidences, line_types
+
+def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: torch.Tensor, mask: torch.Tensor, patch_size):
+    """ Vectorize from graph representations
+    @ positions: [N, 3]
+    @ match: [N+1, N+1]
+    @ segmentation: [3, N] 
+    @ mask: [N, 1] 
+    @ patch_size: (30.0, 60.0)
+    """
+    assert match.shape[0] == match.shape[1], f"match.shape[0]: {match.shape[0]} != match.shape[1]: {match.shape[1]}"
+    # assert positions.shape[0] == segmentation.shape[1] == mask.shape[0], f"Following shapes mismatch: positions.shape[0]({positions.shape[0]}), segmentation.shape[1]({segmentation.shape[1]}), mask.shape[0]({mask.shape[0]}"
+
+    mask = mask.squeeze(-1).cpu() # [N]
+    mask_bin = torch.cat([mask, mask.new_tensor(1).view(1)], 0) # [N+1]
+    match = match.exp().cpu()[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
+    adj_mat = torch.zeros_like(match[:-1]) # [M, M+1]
+    mscores, mindices = torch.topk(match[:-1], 2, -1) # [M, 2]?
+    # segmentation = segmentation.exp().cpu().argmax(0)[mask == 1] # [N] 0, 1, 2

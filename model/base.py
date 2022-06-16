@@ -204,14 +204,14 @@ class BevEncode(nn.Module):
         # x = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
         
         if self.instance_seg:
-            x_embedded = self.up1_embedded(x2, x1)
-            x_embedded = self.up2_embedded(x_embedded)
+            x_embedded = self.up1_embedded(x2, x1) # b, 256, 100, 200
+            x_embedded = self.up2_embedded(x_embedded) # b, 16, 200, 400
         else:
             x_embedded = None
 
         if self.direction_pred:
             x_direction = self.up1_embedded(x2, x1)
-            x_direction = self.up2_direction(x_direction)
+            x_direction = self.up2_direction(x_direction) # b, 37, 200, 400
         else:
             x_direction = None
 
