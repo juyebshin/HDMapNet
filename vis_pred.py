@@ -446,7 +446,7 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
