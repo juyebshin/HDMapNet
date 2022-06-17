@@ -202,7 +202,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     match = matches[si] # [N, N+1]
                     match = match[mask_bin == 1][:, mask_bin == 1] # [M, M+1]
                     match = match[:-1, :-1] # [M, M] no dust
-                    rows, cols = np.where(match > 0.2)
+                    rows, cols = np.where(match > 0.1)
                     
                     impath = os.path.join(logdir, 'vector_pred')
                     if not os.path.exists(impath):
