@@ -11,6 +11,7 @@ from matplotlib.cm import get_cmap
 import tqdm
 import torch
 import torchvision
+from yaml import parse
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
@@ -48,6 +49,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
+            matches_top2, indices_top2 = torch.topk(matches.exp(), 2, -1) # [b, N+1, 2]
             matches = matches.exp().cpu().float().numpy() # b, N+1, N+1 for sinkhorn
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
             attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
@@ -230,6 +232,30 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
                     plt.close()
 
+                    match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
+                    
+                    impath = os.path.join(logdir, 'vector_top2')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.grid(False)
+
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
+                        for s, n in zip(score, next):
+                            if n < len(position_valid):
+                                plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
+                    
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
+
                     attention = attentions[si, -1] # [4, 300, 300]
 
                     impath = os.path.join(logdir, 'match_attention')
@@ -370,7 +396,7 @@ def vis_vectormapnet(model, val_loader, data_conf):
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             
             for si in range(imgs.shape[0]):
-                vectorize_graph(positions, matches, semantic, masks, patch_size)
+                vectorize_graph(positions, matches, semantic, masks, patch_size, data_conf['match_threshold'])
 
 
 
@@ -390,6 +416,7 @@ def main(args):
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
         'vertex_threshold': args.vertex_threshold, # 0.015
+        'match_threshold': args.match_threshold, # 0.2
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
@@ -397,11 +424,11 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
-    if args.instance_seg and args.direction_pred:
-        vis_vector(model, val_loader, args.angle_class, args.logdir)
-    # if args.model == 'VectorMapNet_cam':
-    #     vis_vectormapnet(model, val_loader, data_conf)
+    # vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
+    # if args.instance_seg and args.direction_pred:
+    #     vis_vector(model, val_loader, args.angle_class, args.logdir)
+    if args.model == 'VectorMapNet_cam':
+        vis_vectormapnet(model, val_loader, data_conf)
 
 
 if __name__ == '__main__':
@@ -470,6 +497,7 @@ if __name__ == '__main__':
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--match_threshold", type=float, default=0.2)
 
     args = parser.parse_args()
     main(args)

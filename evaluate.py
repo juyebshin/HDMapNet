@@ -282,6 +282,7 @@ def main(args):
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
         'vertex_threshold': args.vertex_threshold, # 0.015
+        'match_threshold': args.match_threshold, # 0.2
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
@@ -361,6 +362,7 @@ if __name__ == '__main__':
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--match_threshold", type=float, default=0.2)
 
     args = parser.parse_args()
     main(args)
