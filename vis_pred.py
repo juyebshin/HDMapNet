@@ -48,6 +48,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
             vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
+            matches_top2, indices_top2 = torch.topk(matches.exp(), 2, -1) # [b, N+1, 2]
             matches = matches.exp().cpu().float().numpy() # b, N+1, N+1 for sinkhorn
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
             attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
@@ -199,8 +200,8 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
 
                     # matches
                     mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
-                    match = matches[si] # [N, N+1]
-                    match = match[mask_bin == 1][:, mask_bin == 1] # [M, M+1]
+                    match = matches[si] # [N+1, N+1]
+                    match = match[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
                     match = match[:-1, :-1] # [M, M] no dust
                     rows, cols = np.where(match > 0.1)
                     
@@ -225,6 +226,30 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     #                 plt.quiver(pos[0], pos[1], position_valid[next][0] - pos[0], position_valid[next][1] - pos[1], 
                     #                         color=colorise(match[i, next], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
                     plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
+
+                    match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
+                    
+                    impath = os.path.join(logdir, 'vector_top2')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.grid(False)
+
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
+                        for s, n in zip(score, next):
+                            if n < len(position_valid):
+                                plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
+                    
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
                     plt.close()
