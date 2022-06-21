@@ -188,8 +188,8 @@ class _LaneNetCluster(object):
     def _get_lane_embedding_feats(binary_seg_ret, instance_seg_ret):
         """
         get lane embedding features according the binary seg result
-        :param binary_seg_ret:
-        :param instance_seg_ret:
+        :param binary_seg_ret: [200, 400]
+        :param instance_seg_ret: [200, 400, 16]
         :return:
         """
         idx = np.where(binary_seg_ret == 255)
@@ -210,14 +210,14 @@ class _LaneNetCluster(object):
     def apply_lane_feats_cluster(self, binary_seg_result, instance_seg_result):
         """
 
-        :param binary_seg_result:
-        :param instance_seg_result:
+        :param binary_seg_result: [200, 400]
+        :param instance_seg_result: [200, 400, 16]
         :return:
         """
         # get embedding feats and coords
         get_lane_embedding_feats_result = self._get_lane_embedding_feats(
-            binary_seg_ret=binary_seg_result,
-            instance_seg_ret=instance_seg_result
+            binary_seg_ret=binary_seg_result, # [200, 400]
+            instance_seg_ret=instance_seg_result # [200, 400, 16]
         )
 
         # dbscan cluster
@@ -261,8 +261,8 @@ class LaneNetPostProcessor(object):
     def postprocess(self, binary_seg_result, instance_seg_result=None, min_area_threshold=100):
         """
 
-        :param binary_seg_result:
-        :param instance_seg_result:
+        :param binary_seg_result: [200, 400]
+        :param instance_seg_result: [200, 400, 16]
         :param min_area_threshold:
         :param source_image:
         :param data_source:
@@ -272,12 +272,12 @@ class LaneNetPostProcessor(object):
         binary_seg_result = np.array(binary_seg_result * 255, dtype=np.uint8)
 
         # apply image morphology operation to fill in the hold and reduce the small area
-        morphological_ret = _morphological_process(binary_seg_result, kernel_size=5)
+        morphological_ret = _morphological_process(binary_seg_result, kernel_size=5) # [200, 400]
 
-        connect_components_analysis_ret = _connect_components_analysis(image=morphological_ret)
+        connect_components_analysis_ret = _connect_components_analysis(image=morphological_ret) # retval, labels, stats, centroids
 
-        labels = connect_components_analysis_ret[1]
-        stats = connect_components_analysis_ret[2]
+        labels = connect_components_analysis_ret[1] # [200, 400]
+        stats = connect_components_analysis_ret[2] # [N+1, 5] N+1: num of instances + background 5: x, y, w, h, area
         for index, stat in enumerate(stats):
             if stat[4] <= min_area_threshold:
                 idx = np.where(labels == index)
@@ -285,8 +285,8 @@ class LaneNetPostProcessor(object):
 
         # apply embedding features cluster
         mask_image, lane_coords = self._cluster.apply_lane_feats_cluster(
-            binary_seg_result=morphological_ret,
-            instance_seg_result=instance_seg_result
+            binary_seg_result=morphological_ret, # [200, 400]
+            instance_seg_result=instance_seg_result # [200, 400, 16]
         )
 
         return mask_image, lane_coords

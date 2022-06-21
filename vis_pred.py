@@ -202,8 +202,8 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # matches
                     mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
                     match = matches[si] # [N, N+1]
-                    match = match[mask == 1][:, mask_bin == 1] # [M, M+1]
-                    match_idx = match.argmax(1) if len(match) > 0 else None # [M, ] # [M, 1]
+                    match = match[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
+                    match_idx = match[:-1].argmax(1) if len(match) > 0 else None # [M]
                     match = match[:, :-1] # [M, M] no dust
                     rows, cols = np.where(match > 0.2)
                     
@@ -220,13 +220,14 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.grid(False)
 
                     plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-                    for row, col in zip(rows, cols):
-                        plt.plot([position_valid[row, 0], position_valid[col, 0]], [position_valid[row, 1], position_valid[col, 1]], '-', c=colorise(match[row, col], 'jet', 0.0, 1.0))
-                    # if match_idx is not None:
-                    #     for i, (next, pos) in enumerate(zip(match_idx, position_valid)): # [3,]
-                    #             if next < len(match): # not dustbin
-                    #                 plt.quiver(pos[0], pos[1], position_valid[next][0] - pos[0], position_valid[next][1] - pos[1], 
-                    #                         color=colorise(match[i, next], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
+                    # for row, col in zip(rows, cols):
+                    #     plt.plot([position_valid[row, 0], position_valid[col, 0]], [position_valid[row, 1], position_valid[col, 1]], '-', c=colorise(match[row, col], 'jet', 0.0, 1.0))
+                    if match_idx is not None:
+                        for i, (next, pos) in enumerate(zip(match_idx, position_valid)): # [3,]
+                                if next < len(position_valid): # not dustbin
+                                    plt.plot([pos[0], position_valid[next][0]], [pos[1], position_valid[next][1]], '-', c=colorise(match[i, next], 'jet', 0.0, 1.0))
+                                    plt.quiver(pos[0], pos[1], position_valid[next][0] - pos[0], position_valid[next][1] - pos[1], 
+                                            color=colorise(match[i, next], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
                     plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
@@ -382,11 +383,11 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 plt.savefig(img_name)
                 plt.close()
 
-def vis_vectormapnet(model, val_loader, data_conf):
+def vis_vectormapnet(model, val_loader, logdir, data_conf):
     model.eval()
     car_img = Image.open('icon/car.png')
     xbound, ybound = data_conf['xbound'], data_conf['ybound']
-    patch_size = [ybound[1]-ybound[0], xbound[1]-xbound[0]] # [30.0, 60.0]
+    patch_size = [xbound[1]-xbound[0], ybound[1]-ybound[0]] # [60.0, 30.0]
 
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
@@ -396,7 +397,50 @@ def vis_vectormapnet(model, val_loader, data_conf):
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             
             for si in range(imgs.shape[0]):
-                vectorize_graph(positions, matches, semantic, masks, patch_size, data_conf['match_threshold'])
+                coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], data_conf['match_threshold'])
+                
+                # vector_gt = vectors_gt[si] # [instance] list of dict
+
+                # impath = os.path.join(logdir, 'vector_gt')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                # print('saving', imname)
+
+                # fig = plt.figure(figsize=(4, 2))
+                # plt.xlim(-30, 30)
+                # plt.ylim(-15, 15)
+                # plt.axis('off')
+
+                # for vector in vector_gt:
+                #     pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                #     pts = pts[:pts_num]
+                #     x = np.array([pt[0] for pt in pts])
+                #     y = np.array([pt[1] for pt in pts])
+                #     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                # plt.savefig(imname, bbox_inches='tight', dpi=400)
+                # plt.close()
+
+                impath = os.path.join(logdir, 'vector_pred_final')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                print('saving', imname)
+
+                fig = plt.figure(figsize=(4, 2))
+                plt.xlim(-30, 30)
+                plt.ylim(-15, 15)
+                plt.axis('off')
+
+                for coord, confidence, line_type in zip(coords, confidences, line_types):
+                    coord = coord * patch_size # [-30, -15, 30, 15]
+                    x = np.array([pt[0] for pt in coord])
+                    y = np.array([pt[1] for pt in coord])
+                    plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                plt.savefig(imname, bbox_inches='tight', dpi=400)
+                plt.close()
 
 
 
@@ -428,13 +472,13 @@ def main(args):
     # if args.instance_seg and args.direction_pred:
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
     if args.model == 'VectorMapNet_cam':
-        vis_vectormapnet(model, val_loader, data_conf)
+        vis_vectormapnet(model, val_loader, args.logdir, data_conf)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/match_sinkhorn_both')
+    parser.add_argument("--logdir", type=str, default='./runs/vector_cls_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -454,7 +498,7 @@ if __name__ == '__main__':
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default='./runs/match_sinkhorn_both/model_best.pt')
+    parser.add_argument('--modelf', type=str, default='./runs/vector_cls_debug/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
@@ -493,7 +537,7 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
