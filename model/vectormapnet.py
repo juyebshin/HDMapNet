@@ -117,8 +117,6 @@ def log_sinkhorn_iterations(Z, log_mu, log_nu, iters: int):
 def log_optimal_transport(scores, alpha, iters: int):
     """ Perform Differentiable Optimal Transport in Log-space for stability"""
     b, m, n = scores.shape # b, N, N
-    diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
-    scores[diag_mask] = 0.0
     # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
     one = scores.new_tensor(1)
     ms, ns = (m*one).to(scores), (n*one).to(scores) # [b] same as m_valid, n_valid
@@ -233,7 +231,7 @@ class GraphEncoder(nn.Module):
         return self.encoder(input) # [b, 256, N]
 
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, sinkhorn_iters=100) -> None:
+    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True) -> None:
         super(VectorMapNet, self).__init__()
 
         self.num_classes = data_conf['num_channels'] # 4
@@ -245,7 +243,7 @@ class VectorMapNet(nn.Module):
         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
         self.max_vertices = data_conf['num_vectors'] # 300
         self.feature_dim = data_conf['feature_dim'] # 256
-        self.sinkhorn_iters = sinkhorn_iters
+        self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
         # self.GNN_layers = gnn_layers
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
@@ -335,8 +333,23 @@ class VectorMapNet(nn.Module):
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
         matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
         
+        b, m, n = matches.shape
+        diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
+        matches[diag_mask] = 0.0
+        
         # Matching layer
-        matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
+        if self.sinkhorn_iters > 0:
+            matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
+        else:
+            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
+            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
+            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+            matches = torch.cat( # [b, N+1, N+1]
+            [
+                torch.cat([matches, bins0], -1), # [b, N, N+1]
+                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+            ], 1)
+            matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
         # matches.exp() should be probability
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]

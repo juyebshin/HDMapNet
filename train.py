@@ -53,8 +53,9 @@ def train(args):
         'num_vectors': args.num_vectors, # 100
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
+        'sinkhorn_iterations': args.sinkhorn_iterations, # 100
         'vertex_threshold': args.vertex_threshold, # 0.015
-        'match_threshold': args.match_threshold, # 0.2
+        'match_threshold': args.match_threshold, # 0.1
     }
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
@@ -272,7 +273,8 @@ if __name__ == '__main__':
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
-    parser.add_argument("--match_threshold", type=float, default=0.2)
+    parser.add_argument("--sinkhorn_iterations", type=int, default=100)
+    parser.add_argument("--match_threshold", type=float, default=0.1)
 
     args = parser.parse_args()
     train(args)
