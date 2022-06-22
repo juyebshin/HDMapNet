@@ -178,7 +178,7 @@ class GraphLoss(nn.Module):
                     assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
 
                     # add minibatch dimension and class first
-                    match_valid = match_valid.unsqueeze(0) # [1, M+1, M+1]
+                    match_valid = match_valid.unsqueeze(0).transpose(1, 2) # [1, M+1, M+1] class dim first
                     match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M+1, M+1]
 
                     # backward col -> row
@@ -186,12 +186,12 @@ class GraphLoss(nn.Module):
                     match_loss_backward = self.nll_fn(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
 
                     # forward row -> col
-                    match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
+                    # match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
                     match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
                     match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
 
-                    # match_loss = (match_loss_forward + match_loss_backward) * 0.5
-                    match_loss = match_loss_forward
+                    match_loss = (match_loss_forward + match_loss_backward) * 0.5
+                    # match_loss = match_loss_forward
 
                     semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
                     semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
