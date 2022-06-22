@@ -7,7 +7,7 @@ from evaluation.AP import instance_mask_AP
 from evaluation.iou import get_batch_iou
 
 SAMPLED_RECALLS = torch.linspace(0.1, 1, 10)
-THRESHOLDS = [2, 4, 6]
+THRESHOLDS = [2, 4, 6] # [0.2, 0.5, 1.0]?
 
 
 def get_val_info(args):
@@ -68,11 +68,11 @@ def get_val_info(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Evaluate nuScenes local HD Map Construction Results.')
-    parser.add_argument('--result_path', type=str)
-    parser.add_argument('--dataroot', type=str, default='dataset/nuScenes/')
+    parser.add_argument('--result_path', type=str, default='vectormapnet.json')
+    parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
     parser.add_argument('--bsz', type=int, default=4)
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
-    parser.add_argument('--eval_set', type=str, default='mini_val', choices=['train', 'val', 'test', 'mini_train', 'mini_val'])
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--eval_set', type=str, default='val', choices=['train', 'val', 'test', 'mini_train', 'mini_val'])
     parser.add_argument('--thickness', type=int, default=5)
     parser.add_argument('--max_channel', type=int, default=3)
     parser.add_argument('--CD_threshold', type=int, default=5)

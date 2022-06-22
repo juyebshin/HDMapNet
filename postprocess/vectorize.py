@@ -176,7 +176,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                         if single_inst_coords.ndim == 1:
                             single_inst_coords = np.expand_dims(single_inst_coords, 0) # [1, 2]
                         simplified_coords.append(single_inst_coords)
-                        confidences.append(single_inst_confidence)
+                        confidences.append(single_inst_confidence.mean())
                         line_types.append(i)
                         single_inst_coords = positions[cur, :-1] # [1, 2]
                         single_inst_confidence = prob[cur] # [1]
