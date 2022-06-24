@@ -125,7 +125,7 @@ if __name__ == '__main__':
     parser.add_argument("--bsz", type=int, default=4)
     parser.add_argument("--nworkers", type=int, default=10)
 
-    parser.add_argument('--modelf', type=str, default='./runs/vector_cls_debug/model_best.pt')
+    parser.add_argument('--modelf', type=str, default='./runs/vector_softmax/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
@@ -156,7 +156,7 @@ if __name__ == '__main__':
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
     # output
-    parser.add_argument("--output", type=str, default='vectormapnet.json')
+    parser.add_argument("--output", type=str, default='vectormapnet_vector_softmax.json')
 
     args = parser.parse_args()
     main(args)
