@@ -68,7 +68,7 @@ def get_val_info(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Evaluate nuScenes local HD Map Construction Results.')
-    parser.add_argument('--result_path', type=str, default='vectormapnet.json')
+    parser.add_argument('--result_path', type=str, default='vectormapnet_vector_softmax.json')
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
     parser.add_argument('--bsz', type=int, default=4)
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
