@@ -134,12 +134,21 @@ class GraphLoss(nn.Module):
                         # idx_gt_with_same_ins = torch.where(torch.tensor(pts_ins_list).long().cuda() == pts_ins_list[idx_gt])[0] # can have more than one
                         # idx_pred -> idx_gt
                         semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
+                        
+                        # find connection that shares identical nearest gt
+                        idx_pred_same = torch.where(nearest == idx_gt)[0]
+                        idx_pred_same = idx_pred_same[idx_pred_same != idx_pred]
+                        if len(idx_pred_same):
+                            occupied, _ = match_gt[idx_pred_same].max(-1)
+                            idx_pred_same = idx_pred_same[occupied < 1.0]
+                            if len(idx_pred_same):
+                                idx_pred_same = idx_pred_same[cdist[idx_pred_same, idx_gt].argmin()]
+                                match_gt[idx_pred, idx_pred_same] = 1.0
+                                continue
+                        # find connection within same nearest gt instance iteratively
                         while True:
-                            if idx_gt >= len(pts_ins_list):
-                                break
-                            idx_gt_next = idx_gt if idx_gt <= nearest.max() else -1
+                            idx_gt_next = idx_gt + 1 if idx_gt < nearest.max() else -1
                             idx_pred_next = torch.where(nearest == idx_gt_next)[0]
-                            idx_pred_next = idx_pred_next[idx_pred_next != idx_pred]
                             idx_pred_next = idx_pred_next[cdist[idx_pred_next, idx_gt_next].argmin()] if len(idx_pred_next) else None # get one that has min distance
                             # match_gt[idx_pred, idx_pred_next] = 1.0 if idx_pred_next is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_gt_next] else 0.0
                             
@@ -150,7 +159,7 @@ class GraphLoss(nn.Module):
                                 break
                             else:
                                 # match_gt[idx_pred, idx_pred_next] = 0.0
-                                idx_gt = idx_gt_next + 1
+                                idx_gt = idx_gt_next
 
 
                         # # i: index of predicted vector, idx: index of gt vector nearest to the i-th predicted vector
