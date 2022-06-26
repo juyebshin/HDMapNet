@@ -7,7 +7,7 @@ from evaluation.AP import instance_mask_AP
 from evaluation.iou import get_batch_iou
 
 SAMPLED_RECALLS = torch.linspace(0.1, 1, 10)
-THRESHOLDS = [0.2, 0.5, 1.0] # [0.2, 0.5, 1.0]? [2, 4, 6]
+THRESHOLDS = [2, 4, 6] # [0.2, 0.5, 1.0]? [2, 4, 6]
 
 
 def get_val_info(args):
