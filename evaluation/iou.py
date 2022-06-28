@@ -34,7 +34,7 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
             # pred_position: [N, 3]
             # gt_vector: [instance] list of dict
             mask = mask.squeeze(-1) # [N]
-            position_valid = pred_position * dx + bx # de-normalize, [N, 2]
+            position_valid = pred_position * torch.tensor(dx).cuda() + torch.tensor(bx).cuda() # de-normalize, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []
             for ins, vector in enumerate(gt_vector): # dict
