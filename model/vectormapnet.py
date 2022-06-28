@@ -303,10 +303,6 @@ class VectorMapNet(nn.Module):
         scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
         vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
 
-        # Convert (h, w) to (x, y), normalized
-        # v: [N, 2]
-        vertices = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
-
         # Extract distance transform
         dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
 
@@ -316,8 +312,15 @@ class VectorMapNet(nn.Module):
                 for v, s, d in zip(vertices, scores, dt_embedding)
             ]))
 
+        # Convert (h, w) to (x, y), normalized
+        # v: [N, 2]
+        vertices_norm = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
+        
+        # Vertices in pixel coordinate
+        vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x, y
+
         # Positional embedding (x, y, c)
-        pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices, scores)] # list of [N, 3] tensor
+        pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, 3] tensor
         pos_embedding = torch.stack(pos_embedding) # [b, N, 3]
 
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
@@ -354,6 +357,6 @@ class VectorMapNet(nn.Module):
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 
-        # return matches [b, N, N], pos_embedding (normalized -0.5~0.5 with matches) [b, N, 3], masks [b, N, 1]
+        # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), pos_embedding, masks, attentions
+        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks, attentions

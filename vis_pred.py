@@ -20,6 +20,7 @@ from postprocess.vectorize import vectorize, vectorize_graph
 
 from data.image import denormalize_img
 from data.visualize import colorise, colors_plt
+from export_pred_to_json import gen_dx_bx
 
 
 def onehot_encoding(logits, dim=1):
@@ -387,7 +388,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
     model.eval()
     car_img = Image.open('icon/car.png')
     xbound, ybound = data_conf['xbound'], data_conf['ybound']
-    patch_size = [xbound[1]-xbound[0], ybound[1]-ybound[0]] # [60.0, 30.0]
+    dx, bx, nx = gen_dx_bx(xbound, ybound)
 
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
@@ -434,7 +435,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 plt.axis('off')
 
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
-                    coord = coord * patch_size # [-30, -15, 30, 15]
+                    coord = coord * dx + bx # [-30, -15, 30, 15]
                     x = np.array([pt[0] for pt in coord])
                     y = np.array([pt[1] for pt in coord])
                     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])

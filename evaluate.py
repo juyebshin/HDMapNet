@@ -14,7 +14,7 @@ from evaluation.iou import get_batch_iou, get_batch_cd
 from model import get_model
 from data.visualize import colorise, colors_plt
 from data.image import denormalize_img
-from loss import GraphLoss
+from loss import GraphLoss, gen_dx_bx
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -26,7 +26,7 @@ def onehot_encoding(logits, dim=1):
 def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, 
                 vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, 
                 dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, 
-                masks: torch.Tensor, attentions: torch.Tensor, patch_size: list, step: int):
+                masks: torch.Tensor, attentions: torch.Tensor, xbound: list, ybound: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor
@@ -37,6 +37,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     imgs_grid = torchvision.utils.make_grid(imgs, nrow=3) # 3, 262, 1064
     imgs_grid = np.array(denormalize_img(imgs_grid)) # 262, 1064, 3
     writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
+
+    dx, bx, nx = gen_dx_bx(xbound, ybound)
 
 
     if dt is not None:
@@ -79,12 +81,13 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N+1, N+1]
-        # positions: [b, N, 3], x y c
+        # positions: [b, N, 2], x y
         # masks: [b, N, 1]
         # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
-        # patch_size: [30.0, 60.0]
+        # xbound: []
+        # ybound: []
         matches = matches[0].detach().cpu().float().numpy() # [N+1, N+1]
         positions = positions[0].detach().cpu().float().numpy() # [N, 3]
         masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
@@ -92,7 +95,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
-        positions[..., :-1] = positions[..., :-1] * np.array([patch_size[1], patch_size[0]]) # [30, 60]
+        positions = positions * dx + bx # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
 
         # Vector prediction
@@ -100,13 +103,13 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
         plt.axis('off')
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+        # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
 
         matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
         matches_nodust = matches[:-1, :-1] # [M, M]
         rows, cols = np.where(matches_nodust > 0.2)
         for row, col in zip(rows, cols):
-            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], '-', c=cm.jet(matches_nodust[row, col]))
+            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], 'o-', c=cm.jet(matches_nodust[row, col]), linewidth=0.5, markersize=1.0)
         # matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
         # for i, pos in enumerate(positions_valid): # [3,]
         #     if matches_idx is not None:
@@ -139,7 +142,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
         plt.axis('off')
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+        # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
         for attention in attentions: # [N, N] numpy
             attention = attention[masks == 1][:, masks == 1] # [M, M]
             if positions_valid.shape[0] > 0:
@@ -170,7 +173,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # matches_gt = matches_gt[:, :-1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c='b', vmin=0.0, vmax=1.0)
         for i, pos in enumerate(positions_valid): # [3,]
             if matches_idx is not None:
                 match = matches_idx[i]
@@ -223,7 +226,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
 def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
     # st
-    graph_loss_fn = GraphLoss([30.0, 60.0]).cuda()
+    graph_loss_fn = GraphLoss([-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15]).cuda()
 
     model.eval()
     counter = 0
@@ -245,7 +248,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_intersects += intersects
             total_union += union
 
-            cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [30.0, 60.0])
+            cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15])
             total_cdist_p += cdist_p
             total_cdist_l += cdist_l
 
@@ -257,7 +260,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, [30.0, 60.0], step)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15], step)
             
             counter += 1
 

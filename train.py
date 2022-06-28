@@ -82,7 +82,7 @@ def train(args):
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
     vt_loss_fn = CEWithSoftmaxLoss().cuda()
-    graph_loss_fn = GraphLoss(patch_size).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
 
     model.train()
     counter = 0
@@ -173,7 +173,7 @@ def train(args):
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, patch_size, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
                 
             counter += 1
 

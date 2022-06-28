@@ -59,9 +59,6 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
         "results": {}
     }
 
-    
-    xbound, ybound = args.xbound, args.ybound
-    patch_size = [xbound[1]-xbound[0], ybound[1]-ybound[0]] # [60.0, 30.0]
     dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
 
     model.eval()
@@ -75,7 +72,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], args.match_threshold)
                 vectors = []
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
-                    vector = {'pts': coord * patch_size, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
+                    vector = {'pts': coord * dx + bx, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
                     vectors.append(vector)
                 rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
                 submission['results'][rec['token']] = vectors

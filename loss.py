@@ -5,6 +5,11 @@ import torch.nn.functional as F
 
 import numpy as np
 
+def gen_dx_bx(xbound, ybound):
+    dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
+    bx = [row[0] + row[2] / 2.0 for row in [xbound, ybound]] # [-29.925, -14.925]
+    nx = [(row[1] - row[0]) / row[2] for row in [xbound, ybound]] # [400, 200]
+    return dx, bx, nx
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=1, gamma=2, reduce='mean'):
@@ -73,11 +78,11 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, patch_size: list, match_threshold=0.2, reduction='mean') -> None:
+    def __init__(self, xbound: list, ybound: list, match_threshold=0.2, reduction='mean') -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
-        self.patch_size = torch.tensor([patch_size[1], patch_size[0]]).cuda()
+        self.dx, self.bx, _ = gen_dx_bx(xbound, ybound)
         self.match_threshold = match_threshold
         self.reduction = reduction
 
@@ -86,7 +91,7 @@ class GraphLoss(nn.Module):
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N+1, N+1]
-        # positions: [b, N, 3], x y c
+        # positions: [b, N, 2], x y
         # semantics: [b, 3, N] log_softmax dim=1
         # masks: [b, N, 1]
         # vectors_gt: [b] list of [instance] list of dict
@@ -100,13 +105,13 @@ class GraphLoss(nn.Module):
         semantics_gt = []
         for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
             # match: [N, N+1]
-            # position: [N, 3]
+            # position: [N, 2]
             # semantic: [3, N]
             # mask: [N, 1] M ones
             # vector_gt: [instance] list of dict
             mask = mask.squeeze(-1) # [N,]
-            position_valid = position[..., :-1] * self.patch_size # de-normalize, [N, 2]
-            position_valid = position_valid[mask == 1] # [M, 2] x, y c
+            position_valid = position * torch.tensor(self.dx).cuda() + torch.tensor(self.bx).cuda() # de-normalize, [N, 2]
+            position_valid = position_valid[mask == 1] # [M, 2] x, y
             pts_list = []
             pts_ins_list = []
             pts_type_list = []

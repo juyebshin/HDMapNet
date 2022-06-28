@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from loss import gen_dx_bx
+
 
 def get_batch_iou(pred_map, gt_map):
     intersects = []
@@ -18,20 +20,21 @@ def get_batch_iou(pred_map, gt_map):
             unions.append(union)
     return torch.tensor(intersects), torch.tensor(unions)
 
-def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Tensor, patch_size: list):
-    # pred_positions: [b, N, 3]
+def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Tensor, xbound: list, ybound: list):
+    # pred_positions: [b, N, 2]
     # gt_vectors: [b] list of [instance] list of dict
     # masks: [b, N, 1]
+
+    dx, bx, nx = gen_dx_bx(xbound, ybound)
 
     cdist_p_list = []
     cdist_l_list = []
     with torch.no_grad():
-        patch_size = torch.tensor([patch_size[1], patch_size[0]]).cuda()
         for pred_position, gt_vector, mask in zip(pred_positions, gt_vectors, masks):
             # pred_position: [N, 3]
             # gt_vector: [instance] list of dict
             mask = mask.squeeze(-1) # [N]
-            position_valid = pred_position[..., :-1] * patch_size # de-normalize, [N, 2]
+            position_valid = pred_position * dx + bx # de-normalize, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []
             for ins, vector in enumerate(gt_vector): # dict
