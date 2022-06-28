@@ -138,64 +138,102 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         prob = segmentation[i] # [M,]
         # prob = prob[single_class_adj_list[:, 0]] # [M,]
 
-        cur, next = single_class_adj_list[0]
-        cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
-        if len(cur_idx) > 1:
-            # max_idx_idx = match[single_class_adj_list[cur_idx, :-1].squeeze(-1), single_class_adj_list[cur_idx, -1]].argmax()
-            max_idx_idx = single_class_adj_score[cur_idx].argmax()
-            cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
-        single_inst_coords = positions[cur, :-1] # [1, 2]
-        single_inst_confidence = prob[cur] # [1]
-        taken = [cur]
-        single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
-        single_class_adj_score = np.delete(single_class_adj_score, cur_idx, 0)
-        # prob = np.delete(prob, cur_idx, 0)
-        
-        while True: # for all pairs, for instances?
+        while True:
             if single_class_adj_list.shape[0] == 0:
                 break
-            
-            while True:
-                cur = next
-                cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
-                del_idx = cur_idx
-                next = single_class_adj_list[cur_idx, -1]
-                for j, n in enumerate(next):
-                    if j < next.shape[0]:
-                        next = np.delete(next, j) if n in taken else next
-                        cur_idx = np.delete(cur_idx, j) if n in taken else cur_idx
-                if len(next) < 1: # end of instance
-                    if single_class_adj_list.shape[0] > 0:
-                        cur, next = single_class_adj_list[0]
-                        cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
-                        if len(cur_idx) > 1:
-                            max_idx_idx = single_class_adj_score[cur_idx].argmax()
-                            cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
-                        # sort by distance
-                        # single_inst_coords = sort_points_by_dist(single_inst_coords)
-                        if single_inst_coords.ndim == 1:
-                            single_inst_coords = np.expand_dims(single_inst_coords, 0) # [1, 2]
-                        simplified_coords.append(single_inst_coords)
-                        confidences.append(single_inst_confidence.mean())
-                        line_types.append(i)
-                        single_inst_coords = positions[cur, :-1] # [1, 2]
-                        single_inst_confidence = prob[cur] # [1]
-                        taken.append(cur)
-                        single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
-                        single_class_adj_score = np.delete(single_class_adj_score, cur_idx, 0)
-                        # prob = np.delete(prob, cur_idx, 0)
-                    break
-                elif len(next) > 1:
-                    # max_idx_idx = match[single_class_adj_list[cur_idx, :-1].squeeze(-1), single_class_adj_list[cur_idx, -1]].argmax()
-                    max_idx_idx = single_class_adj_score[cur_idx].argmax()
-                    cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
-                if isinstance(next, np.ndarray):
-                    next = next[0]
-                single_inst_coords = np.vstack((single_inst_coords, positions[cur, :-1])) # [K, 2]
-                single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [K, 1]
-                taken.append(cur)
+
+            cur, next = single_class_adj_list[0] # cur -> next
+            cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
+            single_inst_coords = positions[cur, :-1] # [1, 2] np array
+            single_inst_confidence = prob[cur] # [1] np array
+            next_taken = [cur]
+            cur_taken = next_taken.copy()
+            del_idx = cur_idx
+
+            while len(cur_idx):
+                for ci in cur_idx:
+                    cur, next = single_class_adj_list[ci] # cur -> next
+                    cur = next
+                    if cur not in cur_taken:
+                        single_inst_coords = np.vstack((single_inst_coords, positions[cur, :-1])) # [K, 2]
+                        single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [K, 1]
+                        cur_taken.append(cur)
+                next_taken.append(next)
                 single_class_adj_list = np.delete(single_class_adj_list, del_idx, 0)
-                single_class_adj_score = np.delete(single_class_adj_score, del_idx, 0)
+                cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
+                next = single_class_adj_list[cur_idx, -1]
+                del_idx = cur_idx
+                next_taken_idx = []
+                for j, n in enumerate(next):
+                    if n in next_taken:
+                        next_taken_idx.append(j)
+                cur_idx = np.delete(cur_idx, next_taken_idx)
+            
+            simplified_coords.append(single_inst_coords)
+            confidences.append(single_inst_confidence.mean())
+            line_types.append(i)
+
+        # cur, next = single_class_adj_list[0]
+        # cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
+        # if len(cur_idx) > 1:
+        #     # max_idx_idx = match[single_class_adj_list[cur_idx, :-1].squeeze(-1), single_class_adj_list[cur_idx, -1]].argmax()
+        #     max_idx_idx = single_class_adj_score[cur_idx].argmax()
+        #     cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
+        # single_inst_coords = positions[cur, :-1] # [1, 2]
+        # single_inst_confidence = prob[cur] # [1]
+        # taken = [cur]
+        # single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
+        # single_class_adj_score = np.delete(single_class_adj_score, cur_idx, 0)
+        # # prob = np.delete(prob, cur_idx, 0)
+        
+        # while True: # for all pairs, for instances?
+        #     if single_class_adj_list.shape[0] == 0:
+        #         break
+            
+        #     while True:
+        #         cur = next
+        #         cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
+        #         del_idx = cur_idx
+        #         next = single_class_adj_list[cur_idx, -1]
+        #         for j, n in enumerate(next):
+        #             if j < next.shape[0]:
+        #                 next = np.delete(next, j) if n in taken else next
+        #                 cur_idx = np.delete(cur_idx, j) if n in taken else cur_idx
+        #         if len(next) < 1: # end of instance
+        #             if single_class_adj_list.shape[0] > 0:
+        #                 cur, next = single_class_adj_list[0]
+        #                 cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
+        #                 if len(cur_idx) > 1:
+        #                     max_idx_idx = single_class_adj_score[cur_idx].argmax()
+        #                     cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
+        #                 # sort by distance
+        #                 # single_inst_coords = sort_points_by_dist(single_inst_coords)
+        #                 if single_inst_coords.ndim == 1:
+        #                     single_inst_coords = np.expand_dims(single_inst_coords, 0) # [1, 2]
+        #                 simplified_coords.append(single_inst_coords)
+        #                 confidences.append(single_inst_confidence.mean())
+        #                 line_types.append(i)
+        #                 single_inst_coords = positions[cur, :-1] # [1, 2]
+        #                 single_inst_confidence = prob[cur] # [1]
+        #                 taken.append(cur)
+        #                 single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
+        #                 single_class_adj_score = np.delete(single_class_adj_score, cur_idx, 0)
+        #                 # prob = np.delete(prob, cur_idx, 0)
+        #             break
+        #         elif len(next) > 1:
+        #             # max_idx_idx = match[single_class_adj_list[cur_idx, :-1].squeeze(-1), single_class_adj_list[cur_idx, -1]].argmax()
+        #             max_idx_idx = single_class_adj_score[cur_idx].argmax()
+        #             cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
+        #         if isinstance(next, np.ndarray):
+        #             next = next[0]
+        #         single_inst_coords = np.vstack((single_inst_coords, positions[cur, :-1])) # [K, 2]
+        #         single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [K, 1]
+        #         taken.append(cur)
+        #         single_class_adj_list = np.delete(single_class_adj_list, del_idx, 0)
+        #         single_class_adj_score = np.delete(single_class_adj_score, del_idx, 0)
+                
+                
+                
                 # prob = np.delete(prob, del_idx, 0)
             # simplified_coords.append(single_inst_coords)
     return simplified_coords, confidences, line_types
