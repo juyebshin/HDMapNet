@@ -102,7 +102,7 @@ def vectorize(segmentation, embedding, direction, angle_class):
 
 def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: torch.Tensor, mask: torch.Tensor, match_threshold=0.1):
     """ Vectorize from graph representations
-    @ positions: [N, 3]
+    @ positions: [N, 2]
     @ match: [N+1, N+1]
     @ segmentation: [3, N] 
     @ mask: [N, 1] 
@@ -144,7 +144,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
 
             cur, next = single_class_adj_list[0] # cur -> next
             cur_idx, _ = np.where(single_class_adj_list[:, :-1] == cur)
-            single_inst_coords = positions[cur, :-1] # [1, 2] np array
+            single_inst_coords = positions[cur] # [1, 2] np array
             single_inst_confidence = prob[cur] # [1] np array
             next_taken = [cur]
             cur_taken = next_taken.copy()
@@ -155,7 +155,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                     cur, next = single_class_adj_list[ci] # cur -> next
                     cur = next
                     if cur not in cur_taken:
-                        single_inst_coords = np.vstack((single_inst_coords, positions[cur, :-1])) # [K, 2]
+                        single_inst_coords = np.vstack((single_inst_coords, positions[cur])) # [K, 2]
                         single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [K, 1]
                         cur_taken.append(cur)
                 next_taken.append(next)
@@ -169,6 +169,17 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                         next_taken_idx.append(j)
                 cur_idx = np.delete(cur_idx, next_taken_idx)
             
+            range_0 = np.max(single_inst_coords[:, 0]) - np.min(single_inst_coords[:, 0])
+            range_1 = np.max(single_inst_coords[:, 1]) - np.min(single_inst_coords[:, 1])
+            if range_0 > range_1:
+                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[0])
+            else:
+                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[1])
+            
+            single_inst_coords = np.stack(single_inst_coords)
+            single_inst_coords = sort_points_by_dist(single_inst_coords)
+            single_inst_coords = single_inst_coords.astype('int32')
+            
             simplified_coords.append(single_inst_coords)
             confidences.append(single_inst_confidence.mean())
             line_types.append(i)
@@ -179,7 +190,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         #     # max_idx_idx = match[single_class_adj_list[cur_idx, :-1].squeeze(-1), single_class_adj_list[cur_idx, -1]].argmax()
         #     max_idx_idx = single_class_adj_score[cur_idx].argmax()
         #     cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
-        # single_inst_coords = positions[cur, :-1] # [1, 2]
+        # single_inst_coords = positions[cur] # [1, 2]
         # single_inst_confidence = prob[cur] # [1]
         # taken = [cur]
         # single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
@@ -213,7 +224,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         #                 simplified_coords.append(single_inst_coords)
         #                 confidences.append(single_inst_confidence.mean())
         #                 line_types.append(i)
-        #                 single_inst_coords = positions[cur, :-1] # [1, 2]
+        #                 single_inst_coords = positions[cur] # [1, 2]
         #                 single_inst_confidence = prob[cur] # [1]
         #                 taken.append(cur)
         #                 single_class_adj_list = np.delete(single_class_adj_list, cur_idx, 0)
@@ -226,7 +237,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         #             cur, next = single_class_adj_list[cur_idx[max_idx_idx]]
         #         if isinstance(next, np.ndarray):
         #             next = next[0]
-        #         single_inst_coords = np.vstack((single_inst_coords, positions[cur, :-1])) # [K, 2]
+        #         single_inst_coords = np.vstack((single_inst_coords, positions[cur])) # [K, 2]
         #         single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [K, 1]
         #         taken.append(cur)
         #         single_class_adj_list = np.delete(single_class_adj_list, del_idx, 0)
