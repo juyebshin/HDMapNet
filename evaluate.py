@@ -150,7 +150,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                 plt.quiver(positions_valid[:, 0], positions_valid[:, 1], positions_valid[indices, 0] - positions_valid[:, 0], positions_valid[indices, 1] - positions_valid[:, 1],
                            values, cmap='jet', scale_units='xy', angles='xy', scale=1)
             break # only for head 0
-        plt.colorbar()
+        # plt.colorbar()
         writer.add_figure(f'{title}/match_attention', fig, step)
         plt.close()
 
