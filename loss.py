@@ -141,15 +141,15 @@ class GraphLoss(nn.Module):
                         semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
                         
                         # find connection that shares identical nearest gt
-                        idx_pred_same = torch.where(nearest == idx_gt)[0]
-                        idx_pred_same = idx_pred_same[idx_pred_same != idx_pred]
-                        if len(idx_pred_same):
-                            occupied, _ = match_gt[idx_pred_same].max(-1)
-                            idx_pred_same = idx_pred_same[occupied < 1.0]
-                            if len(idx_pred_same):
-                                idx_pred_same = idx_pred_same[cdist[idx_pred_same, idx_gt].argmin()]
-                                match_gt[idx_pred, idx_pred_same] = 1.0
-                                continue
+                        # idx_pred_same = torch.where(nearest == idx_gt)[0]
+                        # idx_pred_same = idx_pred_same[idx_pred_same != idx_pred]
+                        # if len(idx_pred_same):
+                        #     occupied, _ = match_gt[idx_pred_same].max(-1)
+                        #     idx_pred_same = idx_pred_same[occupied < 1.0]
+                        #     if len(idx_pred_same):
+                        #         idx_pred_same = idx_pred_same[cdist[idx_pred_same, idx_gt].argmin()]
+                        #         match_gt[idx_pred, idx_pred_same] = 1.0
+                        #         continue
                         # find connection within same nearest gt instance iteratively
                         while True:
                             idx_gt_next = idx_gt + 1 if idx_gt < nearest.max() else -1
