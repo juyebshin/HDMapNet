@@ -169,16 +169,16 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                         next_taken_idx.append(j)
                 cur_idx = np.delete(cur_idx, next_taken_idx)
             
-            range_0 = np.max(single_inst_coords[:, 0]) - np.min(single_inst_coords[:, 0])
-            range_1 = np.max(single_inst_coords[:, 1]) - np.min(single_inst_coords[:, 1])
-            if range_0 > range_1:
-                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[0])
-            else:
-                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[1])
+            # range_0 = np.max(single_inst_coords[:, 0]) - np.min(single_inst_coords[:, 0])
+            # range_1 = np.max(single_inst_coords[:, 1]) - np.min(single_inst_coords[:, 1])
+            # if range_0 > range_1:
+            #     single_inst_coords = sorted(single_inst_coords, key=lambda x: x[0])
+            # else:
+            #     single_inst_coords = sorted(single_inst_coords, key=lambda x: x[1])
             
-            single_inst_coords = np.stack(single_inst_coords)
-            single_inst_coords = sort_points_by_dist(single_inst_coords)
-            single_inst_coords = single_inst_coords.astype('int32')
+            # single_inst_coords = np.stack(single_inst_coords)
+            # single_inst_coords = sort_points_by_dist(single_inst_coords)
+            # single_inst_coords = single_inst_coords.astype('int32')
             
             simplified_coords.append(single_inst_coords)
             confidences.append(single_inst_confidence.mean())
