@@ -265,8 +265,9 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             counter += 1
 
     total_cdist_p, total_cdist_l = float(total_cdist_p/counter), float(total_cdist_l/counter)
-    print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {float((total_cdist_p + total_cdist_l)*0.5)}')
-    return total_intersects / (total_union + 1e-7)
+    total_cdist = float((total_cdist_p + total_cdist_l)*0.5)
+    print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {total_cdist:.4f}')
+    return total_intersects / (total_union + 1e-7), total_cdist
 
 
 def main(args):

@@ -20,7 +20,7 @@ def get_batch_iou(pred_map, gt_map):
             unions.append(union)
     return torch.tensor(intersects), torch.tensor(unions)
 
-def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Tensor, xbound: list, ybound: list):
+def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Tensor, xbound: list, ybound: list, nonsense: float = 5.0):
     # pred_positions: [b, N, 2]
     # gt_vectors: [b] list of [instance] list of dict
     # masks: [b, N, 1]
@@ -51,8 +51,8 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
                 cdist_p_mean = torch.mean(cdist.min(dim=-1).values) # [N,]
                 cdist_l_mean = torch.mean(cdist.min(dim=0).values) # [P,]
             else:
-                cdist_p_mean = torch.tensor(-1.0).float().cuda()
-                cdist_l_mean = torch.tensor(-1.0).float().cuda()
+                cdist_p_mean = torch.tensor(nonsense).float().cuda()
+                cdist_l_mean = torch.tensor(nonsense).float().cuda()
             
             cdist_p_list.append(cdist_p_mean)
             cdist_l_list.append(cdist_l_mean)

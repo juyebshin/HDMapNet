@@ -13,14 +13,15 @@ from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWit
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from data.utils import label_onehot_decoding
-from evaluation.iou import get_batch_iou
+from evaluation.iou import get_batch_iou, get_batch_cd
 from evaluation.angle_diff import calc_angle_diff
 from model import get_model
 from evaluate import onehot_encoding, eval_iou, visualize
 
 
-def write_log(writer, ious, title, counter):
+def write_log(writer, ious, cdist, title, counter):
     writer.add_scalar(f'{title}/iou', torch.mean(ious[1:]), counter)
+    writer.add_scalar(f'{title}/cdist', cdist, counter)
 
     # for i, iou in enumerate(ious):
     #     writer.add_scalar(f'{title}/class_{i}/iou', iou, counter)
@@ -87,6 +88,7 @@ def train(args):
     model.train()
     counter = 0
     best_iou = 0.0
+    best_cd = 10.0
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
@@ -147,12 +149,15 @@ def train(args):
                 heatmap = vertex.softmax(1)
                 intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
                 iou = intersects / (union + 1e-7)
+                cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15])
+                total_cdist = float((cdist_p + cdist_l)*0.5)
                 logger.info(f"TRAIN[{epoch:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
-                            f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}")
+                            f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
+                            f"CD: {total_cdist:.4f}")
 
-                write_log(writer, iou, 'train', counter)
+                write_log(writer, iou, total_cdist, 'train', counter)
                 writer.add_scalar('train/step_time', t1 - t0, counter)
                 writer.add_scalar('train/seg_loss', seg_loss, counter)
                 writer.add_scalar('train/var_loss', var_loss, counter)
@@ -163,7 +168,6 @@ def train(args):
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
                 writer.add_scalar('train/dt_loss', dt_loss, counter)
                 writer.add_scalar('train/vt_loss', vt_loss, counter)
-                writer.add_scalar('train/cdist_loss', cdist_loss, counter)
                 writer.add_scalar('train/match_loss', match_loss, counter)
                 for bi, mask in enumerate(masks):
                     writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
@@ -177,20 +181,26 @@ def train(args):
                 
             counter += 1
 
-        iou = eval_iou(model, val_loader, writer, epoch, args.vis_interval)
+        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval)
         logger.info(f"EVAL[{epoch:>2d}]:    "
-                    f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}")
+                    f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
+                    f"CD: {cdist:.4f}")
 
-        write_log(writer, iou, 'eval', epoch)
+        write_log(writer, iou, cdist, 'eval', epoch)
         # do not save this to save memory
         # model_name = os.path.join(args.logdir, f"model{epoch}.pt")
         # torch.save(model.state_dict(), model_name)
         # logger.info(f"{model_name} saved")
-        mean_iou = float(torch.mean(iou[:-1])) # mean excluding dustbin
+        # mean_iou = float(torch.mean(iou[:-1])) # mean excluding dustbin
 
-        # save best checkpoint
-        if mean_iou > best_iou:
-            best_iou = mean_iou
+        # # save best checkpoint
+        # if mean_iou > best_iou:
+        #     best_iou = mean_iou
+        #     model_name = os.path.join(args.logdir, "model_best.pt")
+        #     torch.save(model.state_dict(), model_name)
+        #     logger.info(f"{model_name} saved")
+        if cdist < best_cd:
+            best_cd = cdist
             model_name = os.path.join(args.logdir, "model_best.pt")
             torch.save(model.state_dict(), model_name)
             logger.info(f"{model_name} saved")
@@ -203,7 +213,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/position_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/checkpoint_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
