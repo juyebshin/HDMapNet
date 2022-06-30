@@ -3,6 +3,8 @@ import numpy as np
 from PIL import Image
 
 colors_plt = ['r', 'b', 'g']
+color_map = np.random.randint(0, 256, (256, 3))
+color_map[0] = np.array([0, 0, 0])
 
 def colorise(input, cmap, vmin=None, vmax=None):
 

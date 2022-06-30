@@ -263,6 +263,7 @@ class VectorMapNet(nn.Module):
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
+        self.ins_head = nn.Conv1d(self.feature_dim, embedded_dim, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, instance, direction are not used
@@ -329,8 +330,9 @@ class VectorMapNet(nn.Module):
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
-        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
+        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
+        graph_ins = self.ins_head(graph_embedding) # [b, 16, N]
 
         # Adjacency matrix score as inner product of all nodes
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
@@ -359,4 +361,4 @@ class VectorMapNet(nn.Module):
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks, attentions
+        return F.log_softmax(graph_cls, 1), distance, vertex, graph_ins, direction, (matches), vertices, masks, attentions

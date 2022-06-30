@@ -12,9 +12,11 @@ from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from evaluation.iou import get_batch_iou, get_batch_cd
 from model import get_model
-from data.visualize import colorise, colors_plt
+from data.visualize import colorise, colors_plt, color_map
 from data.image import denormalize_img
 from loss import GraphLoss, gen_dx_bx
+
+from sklearn.preprocessing import StandardScaler
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -24,8 +26,8 @@ def onehot_encoding(logits, dim=1):
     return one_hot
 
 def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, 
-                vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, 
-                dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, 
+                vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, instances_gt: torch.Tensor,
+                dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, embeddings: torch.Tensor,
                 masks: torch.Tensor, attentions: torch.Tensor, xbound: list, ybound: list, step: int):
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
@@ -222,6 +224,12 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/vector_semantic_gt', fig, step)
         plt.close()
 
+    if embeddings is not None and instances_gt is not None:
+        # embeddings: [b, 16, N]
+        # instances_gt: [b, N]
+        embedding = embeddings[0].detach().cpu().permute(1, 0) # [N, 16]
+        features = StandardScaler().fit_transform(embedding) # [N, 16]
+
 
 
 def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
@@ -252,7 +260,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             total_cdist_p += cdist_p
             total_cdist_l += cdist_l
 
-            _, _, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            _, _, seg_loss, matches_gt, vector_semantics_gt, vector_instance_gt = graph_loss_fn(matches, positions, semantic, embedding, masks, vectors_gt)
 
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0:                
@@ -260,7 +268,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15], step)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, vector_instance_gt, distance, heatmap, matches, positions, semantic, embedding, masks, attentions, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15], step)
             
             counter += 1
 

@@ -89,10 +89,11 @@ class GraphLoss(nn.Module):
         self.ce_fn = torch.nn.CrossEntropyLoss()
         self.nll_fn = torch.nn.NLLLoss()
 
-    def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
+    def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, embeddings: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N+1, N+1]
         # positions: [b, N, 2], x y
         # semantics: [b, 3, N] log_softmax dim=1
+        # embedding: [b, 16, N] activation not applied
         # masks: [b, N, 1]
         # vectors_gt: [b] list of [instance] list of dict
         # matches = matches.exp()
@@ -103,7 +104,8 @@ class GraphLoss(nn.Module):
         semloss_list = []
         matches_gt = []
         semantics_gt = []
-        for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
+        instances_gt = []
+        for match, position, semantic, instance, mask, vector_gt in zip(matches, positions, semantics, embeddings, masks, vectors_gt):
             # match: [N, N+1]
             # position: [N, 2]
             # semantic: [3, N]
@@ -125,6 +127,7 @@ class GraphLoss(nn.Module):
             position_gt = torch.tensor(np.array(pts_list)).float().cuda() # [P, 2] shaped tensor
             match_gt = torch.zeros_like(match) # [N+1, N+1]
             semantic_gt = torch.zeros_like(semantic) # [3, N]
+            instance_gt = torch.zeros_like(mask) # [N] uint8
 
             if len(position_gt) > 0 and len(position_valid) > 0:            
                 # compute chamfer distance # [N, P] shaped tensor
@@ -139,6 +142,7 @@ class GraphLoss(nn.Module):
                         # idx_gt_with_same_ins = torch.where(torch.tensor(pts_ins_list).long().cuda() == pts_ins_list[idx_gt])[0] # can have more than one
                         # idx_pred -> idx_gt
                         semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
+                        instance_gt[idx_pred] = pts_ins_list[idx_gt] + 1
                         
                         # find connection that shares identical nearest gt
                         # idx_pred_same = torch.where(nearest == idx_gt)[0]
@@ -241,12 +245,14 @@ class GraphLoss(nn.Module):
             semloss_list.append(semantic_loss)
             matches_gt.append(match_gt)
             semantics_gt.append(semantic_gt)
+            instances_gt.append(instance_gt)
         
         cdist_batch = torch.stack(cdist_list) # [b,]
         mloss_batch = torch.stack(mloss_list) # [b,]
         semloss_batch = torch.stack(semloss_list) # [b,]
         matches_gt = torch.stack(matches_gt) # [b, N+1, N+1]
         semantics_gt = torch.stack(semantics_gt) # [b, 3, N]
+        instances_gt = torch.stack(instances_gt) # [b, N]
 
         if self.reduction == 'none':
             pass
@@ -261,7 +267,7 @@ class GraphLoss(nn.Module):
         else:
             raise NotImplementedError
         
-        return cdist_batch, mloss_batch, semloss_batch, matches_gt, semantics_gt
+        return cdist_batch, mloss_batch, semloss_batch, matches_gt, semantics_gt, instances_gt
 
 
 class DiscriminativeLoss(nn.Module):

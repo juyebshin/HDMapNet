@@ -148,7 +148,7 @@ class _LaneNetCluster(object):
     def _embedding_feats_dbscan_cluster(self, embedding_image_feats):
         """
         dbscan cluster
-        :param embedding_image_feats:
+        :param embedding_image_feats: [N, 16]
         :return:
         """
         from sklearn.cluster import MeanShift
@@ -156,7 +156,7 @@ class _LaneNetCluster(object):
         db = DBSCAN(eps=self.dbscan_eps, min_samples=self.postprocess_min_samples)
         # db = MeanShift()
         try:
-            features = StandardScaler().fit_transform(embedding_image_feats)
+            features = StandardScaler().fit_transform(embedding_image_feats) # [N, 16]
             db.fit(features)
         except Exception as err:
             # print(err)
@@ -192,8 +192,8 @@ class _LaneNetCluster(object):
         :param instance_seg_ret: [200, 400, 16]
         :return:
         """
-        idx = np.where(binary_seg_ret == 255)
-        lane_embedding_feats = instance_seg_ret[idx]
+        idx = np.where(binary_seg_ret == 255) # row, col
+        lane_embedding_feats = instance_seg_ret[idx] # [N, 16]
         # idx_scale = np.vstack((idx[0] / 256.0, idx[1] / 512.0)).transpose()
         # lane_embedding_feats = np.hstack((lane_embedding_feats, idx_scale))
         lane_coordinate = np.vstack((idx[1], idx[0])).transpose()
@@ -211,7 +211,7 @@ class _LaneNetCluster(object):
         """
 
         :param binary_seg_result: [200, 400]
-        :param instance_seg_result: [200, 400, 16]
+        :param instance_seg_result: [200, 400, 16] tensor
         :return:
         """
         # get embedding feats and coords

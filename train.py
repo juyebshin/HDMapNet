@@ -130,7 +130,13 @@ def train(args):
             else:
                 dt_loss = 0
             
-            cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt, vector_instance_gt = graph_loss_fn(matches, positions, semantic, embedding, masks, vectors_gt)
+            if embedding is not None:
+                var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, vector_instance_gt)
+            else:
+                var_loss = 0
+                dist_loss = 0
+                reg_loss = 0
             
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
@@ -162,7 +168,7 @@ def train(args):
                 writer.add_scalar('train/seg_loss', seg_loss, counter)
                 writer.add_scalar('train/var_loss', var_loss, counter)
                 writer.add_scalar('train/dist_loss', dist_loss, counter)
-                writer.add_scalar('train/reg_loss', reg_loss, counter)
+                # writer.add_scalar('train/reg_loss', reg_loss, counter)
                 writer.add_scalar('train/direction_loss', direction_loss, counter)
                 writer.add_scalar('train/final_loss', final_loss, counter)
                 writer.add_scalar('train/angle_diff', angle_diff, counter)
@@ -177,7 +183,7 @@ def train(args):
                     distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, vector_instance_gt, distance, heatmap, matches, positions, semantic, embedding, masks, attentions, args.xbound, args.ybound, counter)
                 
             counter += 1
 
@@ -213,7 +219,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/checkpoint_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/instance_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -257,8 +263,8 @@ if __name__ == '__main__':
 
     # loss config
     parser.add_argument("--scale_seg", type=float, default=0.05) # vector segmentation
-    parser.add_argument("--scale_var", type=float, default=1.0)
-    parser.add_argument("--scale_dist", type=float, default=1.0)
+    parser.add_argument("--scale_var", type=float, default=0.05)
+    parser.add_argument("--scale_dist", type=float, default=0.05)
     parser.add_argument("--scale_direction", type=float, default=0.2)
     parser.add_argument("--scale_dt", type=float, default=1.0)
     parser.add_argument("--scale_vt", type=float, default=1.0)
@@ -283,7 +289,7 @@ if __name__ == '__main__':
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
-    parser.add_argument("--sinkhorn_iterations", type=int, default=100)
+    parser.add_argument("--sinkhorn_iterations", type=int, default=0)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
     args = parser.parse_args()
