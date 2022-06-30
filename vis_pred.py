@@ -438,8 +438,8 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     coord = coord * dx + bx # [-30, -15, 30, 15]
                     x = np.array([pt[0] for pt in coord])
                     y = np.array([pt[1] for pt in coord])
-                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-                    plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
+                    plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                    # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                 plt.savefig(imname, bbox_inches='tight', dpi=400)
                 plt.close()
