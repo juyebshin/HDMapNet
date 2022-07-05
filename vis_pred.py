@@ -40,6 +40,8 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
     car_img = Image.open('icon/car.png')
     dist_cmap = get_cmap('magma')
     vertex_cmap = get_cmap('hot')
+    xbound, ybound = [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15]
+    dx, bx, nx = gen_dx_bx(xbound, ybound)
     model.eval()
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
@@ -197,7 +199,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # vector prediction
                     mask = masks[si] # [300]
                     position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
-                    position_valid[..., :-1] = position_valid[..., :-1] * np.array([60.0, 30.0]) # [30, 60]
+                    position_valid = position_valid * dx + bx # [-30, -15, 30, 15]
                     position_valid = position_valid[mask == 1] # [M, 3]
 
                     # matches
