@@ -213,7 +213,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/checkpoint_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/mask_attn_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')

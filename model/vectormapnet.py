@@ -79,7 +79,7 @@ def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int)
     scores: [N] tensor (N vertex scores)
     embeddings: [N, 64] tensor
     """
-    # k: 300
+    # k: 400
     n_vertices = len(vertices) # N
     embedding_dim = embeddings.shape[1]
     if k >= n_vertices:
@@ -101,7 +101,7 @@ def attention(query, key, value, mask=None):
     scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim**.5 # [b, 4, N, N], dim**.5 == 8
     if mask is not None:
         mask = torch.einsum('bdn,bdm->bdnm', mask, mask) # [b, 1, N, N]
-        # scores = scores.masked_fill(mask == 0, -1e9)
+        scores = scores.masked_fill(mask == 0, -1e9)
     prob = torch.nn.functional.softmax(scores, dim=-1) # [b, 4, N, N]
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob # final message passing [b, 64, 4, N]
 
