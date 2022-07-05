@@ -8,8 +8,8 @@ import torch
 
 def sort_points_by_dist(coords):
     coords = coords.astype('float')
-    num_points = coords.shape[0]
-    diff_matrix = np.repeat(coords[:, None], num_points, 1) - coords
+    num_points = coords.shape[0] # [num_pt]
+    diff_matrix = np.repeat(coords[:, None], num_points, 1) - coords # [num_pt, num_pt, 2]
     # x_range = np.max(np.abs(diff_matrix[..., 0]))
     # y_range = np.max(np.abs(diff_matrix[..., 1]))
     # diff_matrix[..., 1] *= x_range / y_range
@@ -39,6 +39,40 @@ def sort_points_by_dist(coords):
 
     return np.stack(sorted_points, 0)
 
+def sort_indexed_points_by_dist(indexed_coords):
+    coords, indices = indexed_coords[:, :-1], indexed_coords[:, -1]
+    coords = coords.astype('float')
+    num_points = coords.shape[0] # [num_pt]
+    diff_matrix = np.repeat(coords[:, None], num_points, 1) - coords # [num_pt, num_pt, 2]
+    # x_range = np.max(np.abs(diff_matrix[..., 0]))
+    # y_range = np.max(np.abs(diff_matrix[..., 1]))
+    # diff_matrix[..., 1] *= x_range / y_range
+    dist_matrix = np.sqrt(((diff_matrix) ** 2).sum(-1))
+    dist_matrix_full = deepcopy(dist_matrix)
+    direction_matrix = diff_matrix / (dist_matrix.reshape(num_points, num_points, 1) + 1e-6)
+
+    sorted_points = [indexed_coords[0]]
+    sorted_indices = [0]
+    dist_matrix[:, 0] = np.inf
+
+    last_direction = np.array([0, 0])
+    for i in range(num_points - 1):
+        last_idx = sorted_indices[-1]
+        dist_metric = dist_matrix[last_idx] - 0 * (last_direction * direction_matrix[last_idx]).sum(-1)
+        idx = np.argmin(dist_metric) % num_points
+        new_direction = direction_matrix[last_idx, idx]
+        if dist_metric[idx] > 3 and min(dist_matrix_full[idx][sorted_indices]) < 5:
+            dist_matrix[:, idx] = np.inf
+            continue
+        if dist_metric[idx] > 10 and i > num_points * 0.9:
+            break
+        sorted_points.append(indexed_coords[idx])
+        sorted_indices.append(idx)
+        dist_matrix[:, idx] = np.inf
+        last_direction = new_direction
+
+    return np.stack(sorted_points, 0)
+    
 
 def connect_by_step(coords, direction_mask, sorted_points, taken_direction, step=5, per_deg=10):
     while True:
@@ -92,3 +126,5 @@ def connect_by_direction(coords, direction_mask, step=5, per_deg=10):
     sorted_points.reverse()
     connect_by_step(coords, direction_mask, sorted_points, taken_direction, step, per_deg)
     return np.stack(sorted_points, 0)
+
+# def connect_by_adj_list(indexed_coords, adj_list):
