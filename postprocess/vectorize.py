@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from .cluster import LaneNetPostProcessor
 from .connect import sort_points_by_dist, connect_by_direction
-from .connect import sort_indexed_points_by_dist
+from .connect import sort_indexed_points_by_dist, connect_by_adj_list
 
 
 def onehot_encoding(logits, dim=0):
@@ -143,7 +143,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         if single_class_adj_list.shape[0] == 0:
             continue
         single_inst_adj_list = single_class_adj_list
-        # single_class_adj_score = match[single_inst_adj_list[:, 0], single_inst_adj_list[:, 1]].numpy() # [M'] confidence
+        single_class_adj_score = match[single_class_adj_list[:, 0], single_class_adj_list[:, 1]].numpy() # [M'] confidence
 
         prob = segmentation[i] # [M,]
         # prob = prob[single_inst_adj_list[:, 0]] # [M,]
@@ -154,7 +154,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
 
             cur, next = single_inst_adj_list[0] # cur -> next
             cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur)
-            single_inst_coords = np.hstack([positions[cur], cur]) # [1, 3] np array
+            single_inst_coords = np.expand_dims(np.hstack([positions[cur], cur]), 0) # [1, 3] np array
             single_inst_confidence = prob[cur] # [1] np array
             cur_taken = [cur]
             next_taken = cur_taken.copy()
@@ -163,7 +163,9 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                 next_list = []
                 for ci in cur_idx:
                     cur, next = single_inst_adj_list[ci] # cur -> next
-                    if next not in cur_taken:
+                    next_idx = np.where(single_inst_adj_list[:, :-1] == next)[0]
+                    next_adj = single_inst_adj_list[next_idx, -1]
+                    if next not in cur_taken and cur in next_adj: # if cur, next have bidirectional connection
                         single_inst_coords = np.vstack((single_inst_coords, np.hstack([positions[next], next]))) # [num, 3]
                         single_inst_confidence = np.vstack((single_inst_confidence, prob[next])) # [num, 1]
                         next_list.append(next)
@@ -189,7 +191,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
             single_inst_coords = np.stack(single_inst_coords) # [num, 3]
             single_inst_coords = sort_indexed_points_by_dist(single_inst_coords)
             single_inst_coords = single_inst_coords.astype('int32') # [num, 3]
-            # single_inst_coords = connect_by_adj_list(single_inst_coords, single_inst_adj_list)
+            # single_inst_coords = connect_by_adj_list(single_inst_coords, single_class_adj_list, single_class_adj_score)
             
             simplified_coords.append(single_inst_coords[:, :-1]) # [num, 2]
             confidences.append(single_inst_confidence.mean())

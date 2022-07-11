@@ -1,4 +1,5 @@
 import math
+from operator import index
 import random
 import numpy as np
 from copy import deepcopy
@@ -75,6 +76,9 @@ def sort_indexed_points_by_dist(indexed_coords):
     
 
 def connect_by_step(coords, direction_mask, sorted_points, taken_direction, step=5, per_deg=10):
+    # direction_mask: [200, 400, 2]
+    # sorted_points: [2]
+    # taken_direction: [200, 400, 2]
     while True:
         last_point = tuple(np.flip(sorted_points[-1]))
         if not taken_direction[last_point][0]:
@@ -111,20 +115,104 @@ def connect_by_step(coords, direction_mask, sorted_points, taken_direction, step
         vector_to_next = coords[idx] - last_point
         deg = np.rad2deg(math.atan2(vector_to_next[1], vector_to_next[0]))
         inverse_deg = (180 + deg) % 360
-        target_direction = per_deg * direction_mask[tuple(np.flip(sorted_points[-1]))]
+        target_direction = per_deg * direction_mask[tuple(np.flip(sorted_points[-1]))] # [2]
         tmp = np.abs(target_direction - inverse_deg)
         tmp = torch.min(tmp, 360 - tmp)
         taken = np.argmin(tmp)
         taken_direction[tuple(np.flip(sorted_points[-1]))][taken] = True
 
+def connect_by_adj(indexed_coords, adj_list, adj_score, sorted_points, taken):
+    while True:
+        last_point = sorted_points[-1] # x y index
+        last_point_idx = np.where(indexed_coords[:, -1] == last_point[-1])[0]
+        if last_point[-1] not in taken:
+            taken.append(last_point[-1]) # vector index
+        else:
+            break
+
+        if last_point_idx >= (len(indexed_coords) - 1): # end of indexed_coords
+            break
+        
+        cur_idx, _ = np.where(adj_list[:, :-1] == last_point[-1])
+        last_point_adj_list = adj_list[cur_idx, -1]
+
+        next_point = indexed_coords[last_point_idx + 1].squeeze(0)
+        next_idx, _ = np.where(adj_list[:, :-1] == next_point[-1])
+        next_point_adj_list = adj_list[next_idx, -1]
+
+        # no connection in neither direction
+        if next_point[-1] not in last_point_adj_list and last_point[-1] not in next_point_adj_list:
+            valid_next = -1
+            last_point_adj_score = adj_score[cur_idx]
+            max_conf = 0.0
+            for candidate, confidence in zip(last_point_adj_list, last_point_adj_score):
+                if candidate not in taken:
+                    if confidence > max_conf:
+                        max_conf = confidence
+                        valid_next = candidate
+            if valid_next == -1:
+                # for candidate in next_point_adj_list:
+                #     if candidate not in taken:
+                #         valid_next = candidate
+                #         break
+                # if valid_next == -1:
+                #     break
+                break
+            next_point_idx = np.where(indexed_coords[:, -1] == valid_next)[0]
+            if not next_point_idx.shape[0]:
+                break
+            next_point = indexed_coords[np.where(indexed_coords[:, -1] == valid_next)[0]].squeeze(0)
+            sorted_points.append(deepcopy(next_point))
+            continue
+        # # only last_point -> next_point
+        # elif last_point[-1] not in next_point_adj_list:
+        #     break
+        # # only next_point -> last_point
+        # elif next_point[-1] not in last_point_adj_list:
+        #     break
+        # last_point and next_point have bidirectional connections
+        else:
+            sorted_points.append(deepcopy(next_point))
+            continue
+
+
 
 def connect_by_direction(coords, direction_mask, step=5, per_deg=10):
     sorted_points = [deepcopy(coords[random.randint(0, coords.shape[0]-1)])]
-    taken_direction = np.zeros_like(direction_mask, dtype=np.bool)
+    taken_direction = np.zeros_like(direction_mask, dtype=np.bool) # [200, 400, 2]
 
     connect_by_step(coords, direction_mask, sorted_points, taken_direction, step, per_deg)
     sorted_points.reverse()
     connect_by_step(coords, direction_mask, sorted_points, taken_direction, step, per_deg)
     return np.stack(sorted_points, 0)
 
-# def connect_by_adj_list(indexed_coords, adj_list):
+def connect_by_adj_list(indexed_coords, adj_list, adj_score):
+    # indexed_coords: [N, 3]
+    # adj_list: [M, 2]
+
+    # dist = np.linalg.norm(indexed_coords[:-1, :-1] - indexed_coords[1:, :-1], axis=1)
+    # indices = np.where(dist > 10.0)[0]
+    # vector_indices = indexed_coords[indices, -1]
+    # del_count = 0
+    # for idx, vi in zip(indices, vector_indices):
+    #     a1, a2 = np.where(adj_list[:, :-1] == vi)
+    #     idx = idx - del_count
+    #     check = np.array([indexed_coords[idx, -1], indexed_coords[idx+1, -1]])
+    #     if check[-1] in adj_list[a1, -1]: # connection is valid
+    #         continue
+    #     valid_connect = adj_list[a1, -1]
+    #     if valid_connect.shape[0] < 2 and idx >= 0: # this vector is outlier
+    #         indexed_coords = np.delete(indexed_coords, idx, 0)
+    #         del_count += 1
+    #     elif idx > 0:
+    #         indexed_coords[[idx-1, idx]] = indexed_coords[[idx, idx-1]]
+    
+    sorted_points = [deepcopy(indexed_coords[random.randint(0, indexed_coords.shape[0]-1)])]
+    taken = []
+
+    connect_by_adj(indexed_coords, adj_list, adj_score, sorted_points, taken)
+    sorted_points.reverse()
+    indexed_coords = np.flip(indexed_coords, 0)
+    taken = []
+    connect_by_adj(indexed_coords, adj_list, adj_score, sorted_points, taken)
+    return np.stack(sorted_points, 0)
