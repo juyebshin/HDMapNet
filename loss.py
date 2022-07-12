@@ -114,11 +114,12 @@ class GraphLoss(nn.Module):
             position_valid = position_valid[mask == 1] # [M, 2] x, y
             pts_list = []
             pts_ins_list = []
+            pts_ins_order = []
             pts_type_list = []
             for ins, vector in enumerate(vector_gt): # dict
                 pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
                 pts = pts[:pts_num] # [p, 2] array
-                [pts_list.append(pt) for pt in pts]
+                [(pts_list.append(pt), pts_ins_order.append(i)) for i, pt in enumerate(pts)]
                 [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
                 [pts_type_list.append(line_type) for _ in pts] # semantic for all vectors 0, 1, 2
             
