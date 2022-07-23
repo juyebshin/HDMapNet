@@ -338,7 +338,7 @@ class VectorMapNet(nn.Module):
         
         b, m, n = matches.shape
         diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
-        matches[diag_mask] = 0.0
+        matches[diag_mask] = -1e9
         
         # Matching layer
         if self.sinkhorn_iters > 0:
