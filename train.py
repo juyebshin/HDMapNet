@@ -154,7 +154,11 @@ def train(args):
                 logger.info(f"TRAIN[{epoch:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
-                            f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
+                            # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
+                            f"DT loss: {dt_loss.item():>7.4f}    "
+                            f"Vertex loss: {vt_loss.item():>7.4f}    "
+                            f"Match loss: {match_loss.item():>7.4f}    "
+                            f"Seg loss: {seg_loss.item():>7.4f}    "
                             f"CD: {total_cdist:.4f}")
 
                 write_log(writer, iou, total_cdist, 'train', counter)
@@ -256,7 +260,7 @@ if __name__ == '__main__':
     parser.add_argument('--angle_class', type=int, default=36)
 
     # loss config
-    parser.add_argument("--scale_seg", type=float, default=0.05) # vector segmentation
+    parser.add_argument("--scale_seg", type=float, default=0.005) # vector segmentation
     parser.add_argument("--scale_var", type=float, default=1.0)
     parser.add_argument("--scale_dist", type=float, default=1.0)
     parser.add_argument("--scale_direction", type=float, default=0.2)
@@ -264,7 +268,7 @@ if __name__ == '__main__':
     parser.add_argument("--scale_vt", type=float, default=1.0)
     parser.add_argument("--scale_cdist", type=float, default=0.0, # 1.0
                         help="Scale of Chamfer distance loss")
-    parser.add_argument("--scale_match", type=float, default=0.05, # 1.0
+    parser.add_argument("--scale_match", type=float, default=0.005, # 1.0
                         help="Scale of matching loss")
 
     # distance transform config

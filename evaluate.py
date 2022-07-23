@@ -185,6 +185,28 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/match_aligned', fig, step)
         plt.close()
 
+        # match_align_debug_v3
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+        # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+
+        matches_debug_nodust = matches_gt[:-1, :-1] # [M, M]
+        rows, cols = np.where(matches_debug_nodust > 0.5)
+        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c='b', vmin=0.0, vmax=1.0)
+        for row, col in zip(rows, cols):
+            plt.quiver(positions_valid[row, 0], positions_valid[row, 1], positions_valid[col, 0] - positions_valid[row, 0], positions_valid[col, 1] - positions_valid[row, 1], 
+                               color=cm.jet(matches_debug_nodust[row, col]), scale_units='xy', angles='xy', scale=1)
+        
+        writer.add_figure(f'{title}/match_align_debug_v3', fig, step)
+        plt.close()
+
+        fig = plt.figure(figsize=(4, 2))
+        plt.xlim(-30, 30)
+        plt.ylim(-15, 15)
+        plt.axis('off')
+
         # Match gt
         fig = plt.figure()
         plt.grid(False)
