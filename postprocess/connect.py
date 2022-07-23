@@ -157,6 +157,7 @@ def connect_by_adj(indexed_coords, adj_list, adj_score, sorted_points, taken):
                 #         break
                 # if valid_next == -1:
                 #     break
+                sorted_points.append(deepcopy(next_point))
                 break
             next_point_idx = np.where(indexed_coords[:, -1] == valid_next)[0]
             if not next_point_idx.shape[0]:

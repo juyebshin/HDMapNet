@@ -126,8 +126,13 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     positions = positions.cpu().numpy()[mask == 1] # [M, 3]
     # adj_mat = torch.zeros_like(match[:-1]) # [M, M+1]
     adj_mat = match[:-1, :-1] > 0.1 # [M, M] for > threshold
+    # adj_onehot = onehot_encoding(match[:-1, :-1], 1).bool() # [N, N]
+    # adj_mat = adj_mat & adj_onehot # max above threshold
     # adj_mat = match[:-1] > 0.1 # [M, M+1] for argmax
-    mscores, mindices = torch.topk(match[:-1], 2, -1) # [M, 2]? for top-2
+    t2scores, t2indices = torch.topk(match[:-1, :-1], 2, -1) # [M, 2]? for top-2
+    t2mat = match.new_full(match[:-1, :-1].shape, 0, dtype=torch.bool)
+    t2mat = t2mat.scatter_(1, t2indices, 1) # [M, M]
+    adj_mat = adj_mat & t2mat # [M, M]
     segmentation = segmentation.exp() # [3, N]
     seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [3, M] 0, 1, 2
     segmentation = segmentation.cpu().numpy()[:, mask == 1] # [3, M]
@@ -142,6 +147,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
         single_class_adj_list = torch.nonzero(adj_mat & single_match_mask).numpy() # [M', 2] symmetric single_class_adj_list[:, 0] -> single_class_adj_list[:, 1]
         if single_class_adj_list.shape[0] == 0:
             continue
+        # single_class_adj_list = np.vstack([single_class_adj_list, np.flip(single_class_adj_list, 1)]) for top 1
         single_inst_adj_list = single_class_adj_list
         single_class_adj_score = match[single_class_adj_list[:, 0], single_class_adj_list[:, 1]].numpy() # [M'] confidence
 
@@ -153,47 +159,77 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
                 break
 
             cur, next = single_inst_adj_list[0] # cur -> next
-            cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur)
-            single_inst_coords = np.expand_dims(np.hstack([positions[cur], cur]), 0) # [1, 3] np array
+            init_cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur) # two or one
+            single_inst_coords = np.expand_dims(positions[cur], 0) # [1, 2]
             single_inst_confidence = prob[cur] # [1] np array
             cur_taken = [cur]
-            next_taken = cur_taken.copy()
 
-            while len(cur_idx):
-                next_list = []
-                for ci in cur_idx:
-                    cur, next = single_inst_adj_list[ci] # cur -> next
-                    next_idx = np.where(single_inst_adj_list[:, :-1] == next)[0]
-                    next_adj = single_inst_adj_list[next_idx, -1]
-                    if next not in cur_taken and cur in next_adj: # if cur, next have bidirectional connection
-                        single_inst_coords = np.vstack((single_inst_coords, np.hstack([positions[next], next]))) # [num, 3]
-                        single_inst_confidence = np.vstack((single_inst_confidence, prob[next])) # [num, 1]
-                        next_list.append(next)
-                        cur_taken.append(next)
-                single_inst_adj_list = np.delete(single_inst_adj_list, cur_idx, 0)
-                next_idx = []
-                for next in next_list:
-                    if next not in next_taken:
-                        next_taken.append(next)
-                        indices, _ = np.where(single_inst_adj_list[:, :-1] == next)
-                        [next_idx.append(idx) for idx in indices]
-                cur_idx = next_idx
+            for ici in init_cur_idx: # one or two
+                cur, next = single_inst_adj_list[0] # cur -> next
+                single_inst_adj_list = np.delete(single_inst_adj_list, 0, 0)
+                while True:
+                    if cur not in cur_taken:
+                        single_inst_coords = np.vstack((single_inst_coords, positions[cur])) # [num, 2]
+                        single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [num, 1]
+                        cur_taken.append(cur)
+                    if cur == next:
+                        break
+                    cur = next
+                    cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur) # two or one
+                    for ci in cur_idx:
+                        next_candidate = single_inst_adj_list[ci, 1]
+                        if next_candidate not in cur_taken:
+                            next = next_candidate # update next
+                    single_inst_adj_list = np.delete(single_inst_adj_list, cur_idx, 0)
+                
+                # reverse
+                single_inst_coords = np.flipud(single_inst_coords)
+                single_inst_confidence = np.flipud(single_inst_confidence)
+                cur_taken.reverse()
+
+            # # backup 20220723
+            # cur, next = single_inst_adj_list[0] # cur -> next
+            # cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur)
+            # single_inst_coords = np.expand_dims(np.hstack([positions[cur], cur]), 0) # [1, 3] np array
+            # single_inst_confidence = prob[cur] # [1] np array
+            # cur_taken = [cur]
+            # next_taken = cur_taken.copy()
+
+            # while len(cur_idx):
+            #     next_list = []
+            #     for ci in cur_idx:
+            #         cur, next = single_inst_adj_list[ci] # cur -> next
+            #         next_idx = np.where(single_inst_adj_list[:, :-1] == next)[0]
+            #         next_adj = single_inst_adj_list[next_idx, -1]
+            #         if next not in cur_taken and cur in next_adj: # if cur, next have bidirectional connection
+            #             single_inst_coords = np.vstack((single_inst_coords, np.hstack([positions[next], next]))) # [num, 3]
+            #             single_inst_confidence = np.vstack((single_inst_confidence, prob[next])) # [num, 1]
+            #             next_list.append(next)
+            #             cur_taken.append(next)
+            #     single_inst_adj_list = np.delete(single_inst_adj_list, cur_idx, 0)
+            #     next_idx = []
+            #     for next in next_list:
+            #         if next not in next_taken:
+            #             next_taken.append(next)
+            #             indices, _ = np.where(single_inst_adj_list[:, :-1] == next)
+            #             [next_idx.append(idx) for idx in indices]
+            #     cur_idx = next_idx
             
             assert len(cur_taken) == len(single_inst_coords)
             
-            range_0 = np.max(single_inst_coords[:, 0]) - np.min(single_inst_coords[:, 0])
-            range_1 = np.max(single_inst_coords[:, 1]) - np.min(single_inst_coords[:, 1])
-            if range_0 > range_1:
-                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[0])
-            else:
-                single_inst_coords = sorted(single_inst_coords, key=lambda x: x[1])
+            # range_0 = np.max(single_inst_coords[:, 0]) - np.min(single_inst_coords[:, 0])
+            # range_1 = np.max(single_inst_coords[:, 1]) - np.min(single_inst_coords[:, 1])
+            # if range_0 > range_1:
+            #     single_inst_coords = sorted(single_inst_coords, key=lambda x: x[0])
+            # else:
+            #     single_inst_coords = sorted(single_inst_coords, key=lambda x: x[1])
             
-            single_inst_coords = np.stack(single_inst_coords) # [num, 3]
-            single_inst_coords = sort_indexed_points_by_dist(single_inst_coords)
-            single_inst_coords = single_inst_coords.astype('int32') # [num, 3]
+            # single_inst_coords = np.stack(single_inst_coords) # [num, 3]
+            # single_inst_coords = sort_indexed_points_by_dist(single_inst_coords)
+            # single_inst_coords = single_inst_coords.astype('int32') # [num, 3]
             # single_inst_coords = connect_by_adj_list(single_inst_coords, single_class_adj_list, single_class_adj_score)
             
-            simplified_coords.append(single_inst_coords[:, :-1]) # [num, 2]
+            simplified_coords.append(single_inst_coords) # [num, 2]
             confidences.append(single_inst_confidence.mean())
             line_types.append(i)
             

@@ -14,7 +14,7 @@ import torchvision
 from yaml import parse
 
 from data.dataset import semantic_dataset, vectormap_dataset
-from data.const import NUM_CLASSES
+from data.const import CAMS, NUM_CLASSES
 from model import get_model
 from postprocess.vectorize import vectorize, vectorize_graph
 
@@ -425,6 +425,21 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 # plt.savefig(imname, bbox_inches='tight', dpi=400)
                 # plt.close()
 
+                # imgs: b, 6, 3, 128, 352
+                # img = imgs[si].detach().cpu().float() # 6, 3, 128, 352
+                # img[3:] = torch.flip(img[3:], [3,])
+                # img_grid = torchvision.utils.make_grid(img, nrow=3) # 3, 262, 1064
+                # img_grid = np.array(denormalize_img(img_grid)) # 262, 1064, 3
+                impath = os.path.join(logdir, 'images')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                print('saving', imname)
+                # Image.fromarray(img_grid).save(imname)
+
+                for img, intrin, rot, tran, cam in zip(imgs[si], intrins[si], rots[si], trans[si], CAMS):
+                    img = np.array(denormalize_img(img))
+
                 impath = os.path.join(logdir, 'vector_pred_final')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
@@ -501,7 +516,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/mask_attn_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/match_align_debug_v3')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -521,7 +536,7 @@ if __name__ == '__main__':
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
-    parser.add_argument('--modelf', type=str, default='./runs/mask_attn_debug/model_best.pt')
+    parser.add_argument('--modelf', type=str, default='./runs/match_align_debug_v3/model_best.pt')
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)
