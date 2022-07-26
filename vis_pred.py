@@ -457,11 +457,14 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                             img = cv2.arrowedLine(img, (x[j], y[j]), (x[j+1], y[j+1]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
                     if i > 2:
                         img = cv2.flip(img, 1)
-                    img = cv2.putText(img, cam, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv2.LINE_AA)
+                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+                    text_w, text_h = text_size
+                    cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                     ax.imshow(img)
                     
                 plt.subplots_adjust(wspace=0.0, hspace=0.0)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=200)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
                 # Vector map
@@ -483,7 +486,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
                     # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
                 # Instance map
@@ -502,7 +505,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     coord = coord * dx + bx # [-30, -15, 30, 15]
                     plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
                 
                 # # Vector instances with grids
