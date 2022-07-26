@@ -277,10 +277,13 @@ class VectorMapNet(nn.Module):
         onehot = self.argmax(scores) # b, 65, 25, 50, onehot over axis 64 list of length b, [N, 2(row, col)] tensor
         scores = scores[:, :-1] # b, 64, 25, 50
         b, _, h, w = scores.shape # b, 64, 25, 50
-        scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        scores = simple_nms(scores, int(self.cell_size*0.5)) # 4, 200, 400
-        score_shape = scores.shape # 4, 200, 400
+        mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
+        scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
+        scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
+        scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        # scores = simple_nms(scores, int(self.cell_size*0.5)+1) # 4, 200, 400
+        score_shape = scores_max.shape # 4, 200, 400
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
         # scores[scores < self.vertex_threshold] = 0.0
@@ -299,8 +302,8 @@ class VectorMapNet(nn.Module):
         # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
 
         # [2] Extract vertices using NMS
-        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores] # list of length b, [N, 2(row, col)] tensor
-        scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores_max] # list of length b, [N, 2(row, col)] tensor
+        scores = [s[tuple(v.t())] for s, v in zip(scores_max, vertices)] # list of length b, [N] tensor
         vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
 
         # Extract distance transform
