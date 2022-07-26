@@ -3,10 +3,12 @@ import enum
 import os
 import argparse
 import numpy as np
+import cv2
 from PIL import Image
 
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
+from matplotlib.colors import to_rgb
 
 import tqdm
 import torch
@@ -15,6 +17,7 @@ from yaml import parse
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import CAMS, NUM_CLASSES
+from data.utils import get_proj_mat, perspective
 from model import get_model
 from postprocess.vectorize import vectorize, vectorize_graph
 
@@ -391,6 +394,8 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
     car_img = Image.open('icon/car.png')
     xbound, ybound = data_conf['xbound'], data_conf['ybound']
     dx, bx, nx = gen_dx_bx(xbound, ybound)
+    img_size = data_conf['image_size'] # [128, 352]
+    intrin_scale = torch.tensor([img_size[1] / 1600., img_size[0] / 900., 1.0]) * torch.eye(3)
 
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
@@ -425,21 +430,41 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 # plt.savefig(imname, bbox_inches='tight', dpi=400)
                 # plt.close()
 
-                # imgs: b, 6, 3, 128, 352
-                # img = imgs[si].detach().cpu().float() # 6, 3, 128, 352
-                # img[3:] = torch.flip(img[3:], [3,])
-                # img_grid = torchvision.utils.make_grid(img, nrow=3) # 3, 262, 1064
-                # img_grid = np.array(denormalize_img(img_grid)) # 262, 1064, 3
                 impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
                 print('saving', imname)
-                # Image.fromarray(img_grid).save(imname)
 
-                for img, intrin, rot, tran, cam in zip(imgs[si], intrins[si], rots[si], trans[si], CAMS):
-                    img = np.array(denormalize_img(img))
+                fig = plt.figure(figsize=(2*2.7*3, 2*2))
+                for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[si], intrins[si], rots[si], trans[si], CAMS)):
+                    img = np.array(denormalize_img(img)) # r, c, 3
+                    intrin = intrin_scale @ intrin
+                    P = get_proj_mat(intrin, rot, tran)
+                    ax = fig.add_subplot(2, 3, i+1)
+                    ax.get_xaxis().set_visible(False)
+                    ax.get_yaxis().set_visible(False)
+                    for coord, confidence, line_type in zip(coords, confidences, line_types):
+                        coord = coord * dx + bx # [-30, -15, 30, 15]
+                        pts, pts_num = coord, coord.shape[0]
+                        zeros = np.zeros((pts_num, 1))
+                        ones = np.ones((pts_num, 1))
+                        world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
+                        pix_coords = perspective(world_coords, P)
+                        x = np.array([pts[0] for pts in pix_coords], dtype='int')
+                        y = np.array([pts[1] for pts in pix_coords], dtype='int')
+                        for j in range(x.shape[0]-1):
+                            img = cv2.arrowedLine(img, (x[j], y[j]), (x[j+1], y[j+1]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
+                    if i > 2:
+                        img = cv2.flip(img, 1)
+                    img = cv2.putText(img, cam, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv2.LINE_AA)
+                    ax.imshow(img)
+                    
+                plt.subplots_adjust(wspace=0.0, hspace=0.0)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=200)
+                plt.close()
 
+                # Vector map
                 impath = os.path.join(logdir, 'vector_pred_final')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
@@ -458,9 +483,10 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
                     # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', dpi=400)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
                 plt.close()
 
+                # Instance map
                 impath = os.path.join(logdir, 'instance_pred')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
@@ -476,8 +502,32 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     coord = coord * dx + bx # [-30, -15, 30, 15]
                     plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', dpi=400)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
                 plt.close()
+                
+                # # Vector instances with grids
+                # impath = os.path.join(logdir, 'instance_grid')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                # print('saving', imname)
+
+                # plt.figure(figsize=(4, 2))
+                # plt.xlim(-30, 30)
+                # plt.ylim(-15, 15)
+                # # plt.axis('off')
+                # major_xticks = np.linspace(-30, 30, 51)
+                # major_yticks = np.linspace(-15, 15, 26)
+                # plt.xticks(major_xticks, fontsize=2)
+                # plt.yticks(major_yticks, fontsize=2)
+                # plt.grid(True)
+
+                # for coord in coords:
+                #     coord = coord * dx + bx # [-30, -15, 30, 15]
+                #     plt.plot(coord[:, 0], coord[:, 1], 'o-', linewidth=0.1, markersize=0.5)
+                # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                # plt.savefig(imname, bbox_inches='tight', dpi=400)
+                # plt.close()
 
 
 
