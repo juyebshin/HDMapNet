@@ -438,7 +438,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
 
                 fig = plt.figure(figsize=(8, 3))
                 for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[si], intrins[si], rots[si], trans[si], CAMS)):
-                    img = np.array(denormalize_img(img)) # r, c, 3
+                    img = np.array(denormalize_img(img)) # h, w, 3
                     intrin = intrin_scale @ intrin
                     P = get_proj_mat(intrin, rot, tran)
                     ax = fig.add_subplot(2, 3, i+1)
