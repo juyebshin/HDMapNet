@@ -282,7 +282,7 @@ class VectorMapNet(nn.Module):
         scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
         scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        # scores = simple_nms(scores, int(self.cell_size*0.5)+1) # 4, 200, 400
+        scores = simple_nms(scores, int(self.cell_size*0.5)) # 4, 200, 400
         score_shape = scores_max.shape # 4, 200, 400
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
