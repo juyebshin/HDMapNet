@@ -125,7 +125,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     match = match.exp().cpu()[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
     positions = positions.cpu().numpy()[mask == 1] # [M, 3]
     # adj_mat = torch.zeros_like(match[:-1]) # [M, M+1]
-    adj_mat = match[:-1, :-1] > 0.1 # [M, M] for > threshold
+    adj_mat = match[:-1, :-1] > match_threshold # [M, M] for > threshold
     # adj_onehot = onehot_encoding(match[:-1, :-1], 1).bool() # [N, N]
     # adj_mat = adj_mat & adj_onehot # max above threshold
     # adj_mat = match[:-1] > 0.1 # [M, M+1] for argmax
