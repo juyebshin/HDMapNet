@@ -116,28 +116,28 @@ def log_sinkhorn_iterations(Z, log_mu, log_nu, iters: int):
 
 def log_optimal_transport(scores, alpha, iters: int):
     """ Perform Differentiable Optimal Transport in Log-space for stability"""
-    b, m, n = scores.shape # b, N, N
+    b, m, n = scores.shape # b, N+1, N+1
     # m_valid = n_valid = torch.count_nonzero(masks, 1).squeeze(-1) # [b] number of valid
     one = scores.new_tensor(1)
-    ms, ns = (m*one).to(scores), (n*one).to(scores) # [b] same as m_valid, n_valid
+    ms, ns = ((m)*one).to(scores), ((n)*one).to(scores) # [b] same as m_valid, n_valid
 
-    bins0 = alpha.expand(b, m, 1) # [b, N, 1]
-    bins1 = alpha.expand(b, 1, n) # [b, 1, N]
-    alpha = alpha.expand(b, 1, 1) # [b, 1, 1]
+    # bins0 = alpha.expand(b, m, 1) # [b, N, 1]
+    # bins1 = alpha.expand(b, 1, n) # [b, 1, N]
+    # alpha = alpha.expand(b, 1, 1) # [b, 1, 1]
 
-    couplings = torch.cat( # [b, N+1, N+1]
-        [
-            torch.cat([scores, bins0], -1), # [b, N, N+1]
-            torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-        ], 1)
+    # couplings = torch.cat( # [b, N+1, N+1]
+    #     [
+    #         torch.cat([scores, bins0], -1), # [b, N, N+1]
+    #         torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+    #     ], 1)
     # masks_bins = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
 
     norm = - (ms + ns).log() # [b]
-    log_mu = torch.cat([norm.expand(m), ns.log()[None] + norm]) # [N+1]
-    log_nu = torch.cat([norm.expand(n), ms.log()[None] + norm]) # [N+1]
+    log_mu = torch.cat([norm.expand(m-1), ns.log()[None] + norm]) # [N+1]
+    log_nu = torch.cat([norm.expand(n-1), ms.log()[None] + norm]) # [N+1]
     log_mu, log_nu = log_mu[None].expand(b, -1), log_nu[None].expand(b, -1) # [b, N+1]
 
-    Z = log_sinkhorn_iterations(couplings, log_mu, log_nu, iters)
+    Z = log_sinkhorn_iterations(scores, log_mu, log_nu, iters)
     Z = Z - norm  # multiply probabilities by M+N
     return Z
 
@@ -258,7 +258,7 @@ class VectorMapNet(nn.Module):
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
-        bin_score = nn.Parameter(torch.tensor(1.))
+        bin_score = nn.Parameter(torch.randn(self.feature_dim, 1))
         self.register_parameter('bin_score', bin_score)
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
@@ -327,17 +327,20 @@ class VectorMapNet(nn.Module):
         pos_embedding = torch.stack(pos_embedding) # [b, N, 3]
 
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
-        masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
+        masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1] dtype=torch.uint8
 
         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
+        dust_embedding = self.bin_score.repeat(b, 1, 1) # [b, 256, 1]
+        graph_embedding = torch.cat([graph_embedding, dust_embedding], -1) # [b, 256, N+1]
+        masks = torch.cat([masks, masks.new_tensor(1).expand(b, 1, 1)], 1) # [b, N+1, 1]
         # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
-        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
-        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
+        graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N+1], [b, L, 4, N+1, N+1]
+        graph_cls = self.cls_head(graph_embedding)[..., :-1] # [b, 3, N]
+        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N+1]
 
         # Adjacency matrix score as inner product of all nodes
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
+        matches = matches / self.feature_dim**.5 # [b, N+1, N+1] [match.fill_diagonal_(0.0) for match in matches]
         
         b, m, n = matches.shape
         diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
@@ -347,14 +350,6 @@ class VectorMapNet(nn.Module):
         if self.sinkhorn_iters > 0:
             matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
         else:
-            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-            matches = torch.cat( # [b, N+1, N+1]
-            [
-                torch.cat([matches, bins0], -1), # [b, N, N+1]
-                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-            ], 1)
             matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
         # matches.exp() should be probability
 

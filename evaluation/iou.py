@@ -23,7 +23,7 @@ def get_batch_iou(pred_map, gt_map):
 def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Tensor, xbound: list, ybound: list, nonsense: float = 5.0):
     # pred_positions: [b, N, 2]
     # gt_vectors: [b] list of [instance] list of dict
-    # masks: [b, N, 1]
+    # masks: [b, N+1, 1]
 
     dx, bx, nx = gen_dx_bx(xbound, ybound)
 
@@ -33,7 +33,7 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
         for pred_position, gt_vector, mask in zip(pred_positions, gt_vectors, masks):
             # pred_position: [N, 3]
             # gt_vector: [instance] list of dict
-            mask = mask.squeeze(-1) # [N]
+            mask = mask[:-1].squeeze(-1) # [N]
             position_valid = pred_position * torch.tensor(dx).cuda() + torch.tensor(bx).cuda() # de-normalize, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y c
             pts_list = []

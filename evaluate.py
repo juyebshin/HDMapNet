@@ -82,21 +82,21 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N+1, N+1]
         # positions: [b, N, 2], x y
-        # masks: [b, N, 1]
-        # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
+        # masks: [b, N+1, 1]
+        # attentions: [b, L, H, N+1, N+1] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
         # xbound: []
         # ybound: []
         matches = matches[0].detach().cpu().float().numpy() # [N+1, N+1]
         positions = positions[0].detach().cpu().float().numpy() # [N, 3]
-        masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
-        attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
-        masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
+        masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N+1]
+        attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N+1, N+1] attention of the last layer
+        # masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
         positions = positions * dx + bx # [30, 60]
-        positions_valid = positions[masks == 1] # [M, 3]
+        positions_valid = positions[masks[:-1] == 1] # [M, 3]
 
         # Vector prediction
         fig = plt.figure(figsize=(4, 2))
@@ -105,7 +105,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
         # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
 
-        matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
+        matches = matches[masks == 1][:, masks == 1] # masked [M+1, M+1]
         matches_nodust = matches[:-1, :-1] # [M, M]
         rows, cols = np.where(matches_nodust > 0.2)
         for row, col in zip(rows, cols):
@@ -143,8 +143,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.ylim(-15, 15)
         plt.axis('off')
         # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-        for attention in attentions: # [N, N] numpy
-            attention = attention[masks == 1][:, masks == 1] # [M, M]
+        for attention in attentions: # [N+1, N+1] numpy
+            attention = attention[:-1, :-1][masks[:-1] == 1][:, masks[:-1] == 1] # [M, M]
             if positions_valid.shape[0] > 0:
                 values, indices = attention.max(-1), attention.argmax(-1) # [M]
                 plt.quiver(positions_valid[:, 0], positions_valid[:, 1], positions_valid[indices, 0] - positions_valid[:, 0], positions_valid[indices, 1] - positions_valid[:, 1],
@@ -169,7 +169,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
 
         # matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks_bins == 1] # [M, M] upper triangle matrix without diagonal
-        matches_gt = matches_gt[masks_bins == 1][:, masks_bins == 1] # [M+1, M+1]
+        matches_gt = matches_gt[masks == 1][:, masks == 1] # [M+1, M+1]
         # matches_gt = matches_gt[:, :-1] # [M, M]
         matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
         
@@ -221,8 +221,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         semantic = semantics[0].exp().detach().cpu().float().numpy() # [3, N]
         semantic_gt = semantics_gt[0].detach().cpu().float().numpy().astype('uint8') # [3, N]
         
-        semantic_onehot = semantic.argmax(0)[masks == 1] # [M]
-        semantic_gt_onehot = semantic_gt.argmax(0)[masks == 1] # [M]
+        semantic_onehot = semantic.argmax(0)[masks[:-1] == 1] # [M]
+        semantic_gt_onehot = semantic_gt.argmax(0)[masks[:-1] == 1] # [M]
 
         # Semantic prediction
         fig = plt.figure(figsize=(4, 2))

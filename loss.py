@@ -93,7 +93,7 @@ class GraphLoss(nn.Module):
         # matches: [b, N+1, N+1]
         # positions: [b, N, 2], x y
         # semantics: [b, 3, N] log_softmax dim=1
-        # masks: [b, N, 1]
+        # masks: [b, N+1, 1]
         # vectors_gt: [b] list of [instance] list of dict
         # matches = matches.exp()
 
@@ -108,11 +108,11 @@ class GraphLoss(nn.Module):
             # match: [N, N+1]
             # position: [N, 2]
             # semantic: [3, N]
-            # mask: [N, 1] M ones
+            # mask: [N+1, 1] M+1 ones
             # vector_gt: [instance] list of dict
             mask = mask.squeeze(-1) # [N,]
             position_valid = position * torch.tensor(self.dx).cuda() + torch.tensor(self.bx).cuda() # de-normalize, [N, 2]
-            position_valid = position_valid[mask == 1] # [M, 2] x, y
+            position_valid = position_valid[mask[:-1] == 1] # [M, 2] x, y
             pts_list = []
             pts_ins_list = []
             pts_ins_order = []
@@ -200,7 +200,7 @@ class GraphLoss(nn.Module):
                         _, min_row_idx = dist_map[rows, multi_col].min(0)
                         match_gt[rows[min_row_idx], multi_col] = 1.0
                     
-                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
+                    # mask = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
                     match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
                     match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
                     assert torch.min(match_gt[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt[:-1].sum(1))}"
@@ -211,8 +211,8 @@ class GraphLoss(nn.Module):
                     assert torch.min(match_gt[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt[:, :-1].sum(0))}"
                     assert torch.max(match_gt[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt[:, :-1].sum(0))}"
 
-                    match_valid = match[mask_bins == 1][:, mask_bins == 1] # [M+1, M+1]
-                    match_gt_valid = match_gt[mask_bins == 1][:, mask_bins == 1] # [M, M+1]
+                    match_valid = match[mask == 1][:, mask == 1] # [M+1, M+1]
+                    match_gt_valid = match_gt[mask == 1][:, mask == 1] # [M, M+1]
                     assert torch.min(match_gt_valid[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid[:-1].sum(1))}"
                     assert torch.max(match_gt_valid[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid[:-1].sum(1))}"
                     assert torch.min(match_gt_valid[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt_valid[:, :-1].sum(0))}"
@@ -234,8 +234,8 @@ class GraphLoss(nn.Module):
                     match_loss = (match_loss_forward + match_loss_backward) * 0.5
                     # match_loss = match_loss_forward
 
-                    semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
-                    semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                    semantic_valid = semantic[:, mask[:-1] == 1].unsqueeze(0) # [1, 3, M]
+                    semantic_gt_valid = semantic_gt[:, mask[:-1] == 1].unsqueeze(0) # [1, 3, M]
                     assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
                     assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
                     semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
