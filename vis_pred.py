@@ -430,11 +430,11 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 # plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 # plt.close()
 
-                # impath = os.path.join(logdir, 'images')
-                # if not os.path.exists(impath):
-                #     os.mkdir(impath)
-                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                # print('saving', imname)
+                impath = os.path.join(logdir, 'images')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                print('saving', imname)
 
                 fig = plt.figure(figsize=(8, 3))
                 for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[si], intrins[si], rots[si], trans[si], CAMS)):
