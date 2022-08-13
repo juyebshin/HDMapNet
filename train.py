@@ -187,7 +187,7 @@ def train(args):
 
         iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval)
         logger.info(f"EVAL[{epoch:>2d}]:    "
-                    f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
+                    # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")
 
         write_log(writer, iou, cdist, 'eval', epoch)
