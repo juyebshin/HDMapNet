@@ -465,7 +465,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     ax.imshow(img)
                     
                 plt.subplots_adjust(wspace=0.0, hspace=0.0)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=200)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
                 plt.close()
 
                 # Vector map
