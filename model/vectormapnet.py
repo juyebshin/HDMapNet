@@ -141,20 +141,6 @@ def log_optimal_transport(scores, alpha, iters: int):
     Z = Z - norm  # multiply probabilities by M+N
     return Z
 
-
-class ArgMax(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, dim=1):
-        idx = torch.argmax(input, dim, keepdim=True) # b, 1, h, w
-
-        output = torch.zeros_like(input) # b, c, h, w
-        output.scatter_(dim, idx, 1) # b, c, h, w
-
-        return output
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
 class MultiHeadedAttention(nn.Module):
     """ Multi-head attention to increase model expressivitiy """
     def __init__(self, num_heads: int, d_model: int):
@@ -247,7 +233,6 @@ class VectorMapNet(nn.Module):
         # self.GNN_layers = gnn_layers
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
-        self.argmax = ArgMax.apply
 
         # Intermediate representations: vertices, distance transform
         self.bev_backbone = HDMapNet(data_conf, False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
@@ -274,7 +259,6 @@ class VectorMapNet(nn.Module):
 
         # Compute the dense vertices scores (heatmap)
         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        onehot = self.argmax(scores) # b, 65, 25, 50, onehot over axis 64 list of length b, [N, 2(row, col)] tensor
         scores = scores[:, :-1] # b, 64, 25, 50
         b, _, h, w = scores.shape # b, 64, 25, 50
         mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
@@ -339,9 +323,14 @@ class VectorMapNet(nn.Module):
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
         matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
         
+        # Don't care self matches
         b, m, n = matches.shape
         diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
         matches[diag_mask] = -1e9
+
+        # Don't care bin matches
+        match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [B, N, N]
+        matches = matches.masked_fill(match_mask == 0, -1e9)
         
         # Matching layer
         if self.sinkhorn_iters > 0:
