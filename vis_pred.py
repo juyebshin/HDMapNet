@@ -134,32 +134,32 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
 
                 if vertex_pred:
                     # heatmap
-                    # heatmap = vertex[si, :-1, :, :] # 64, 25, 50
-                    # Hc, Wc = heatmap.shape[1:] # 25, 50
-                    # heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
-                    # heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
-                    # heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-                    # heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
-                    # heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
-                    # heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    # impath = os.path.join(logdir, 'heatmap')
-                    # if not os.path.exists(impath):
-                    #     os.mkdir(impath)
-                    # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    # print('saving', imname)
-                    # Image.fromarray(heatmap_color.astype('uint8')).save(imname)
-                    # # vertex
-                    # # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
-                    # # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
-                    # # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
-                    # heatmap[heatmap > 0] = 1
-                    # vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    # impath = os.path.join(logdir, 'vertex')
-                    # if not os.path.exists(impath):
-                    #     os.mkdir(impath)
-                    # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    # print('saving', imname)
-                    # Image.fromarray(vertex_color.astype('uint8')).save(imname)
+                    heatmap = vertex[si, :-1, :, :] # 64, 25, 50
+                    Hc, Wc = heatmap.shape[1:] # 25, 50
+                    heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
+                    heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+                    heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
+                    heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
+                    heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'heatmap')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(heatmap_color.astype('uint8')).save(imname)
+                    # vertex
+                    # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
+                    # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
+                    # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
+                    heatmap[heatmap > 0] = 1
+                    vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'vertex')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+                    Image.fromarray(vertex_color.astype('uint8')).save(imname)
                     
                     # nodust_gt = vertex_gt[si, :-1, :, :] # 64, 25, 50
                     # Hc, Wc = nodust_gt.shape[1:] # 25, 50
@@ -200,48 +200,20 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # plt.close()
 
                     # vector prediction
-                    mask = masks[si] # [300]
+                    mask = masks[si] # [400]
                     position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
                     position_valid = position_valid * dx + bx # [-30, -15, 30, 15]
                     position_valid = position_valid[mask == 1] # [M, 3]
 
-                    # matches
-                    mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
-                    match = matches[si] # [N, N+1]
-                    match = match[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
-                    match_idx = match[:-1].argmax(1) if len(match) > 0 else None # [M]
-                    match = match[:-1, :-1] # [M, M] no dust
-                    rows, cols = np.where(match > 0.1)
+                    # # matches
+                    # mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
+                    # match = matches[si] # [N, N+1]
+                    # match = match[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
+                    # match_idx = match[:-1].argmax(1) if len(match) > 0 else None # [M]
+                    # match = match[:-1, :-1] # [M, M] no dust
+                    # rows, cols = np.where(match > 0.1)
                     
-                    impath = os.path.join(logdir, 'vector_pred')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    print('saving', imname)
-
-                    fig = plt.figure(figsize=(4, 2))
-                    plt.xlim(-30, 30)
-                    plt.ylim(-15, 15)
-                    plt.axis('off')
-                    plt.grid(False)
-
-                    # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=1.0, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-                    for row, col in zip(rows, cols):
-                        plt.plot([position_valid[row, 0], position_valid[col, 0]], [position_valid[row, 1], position_valid[col, 1]], 'o-', c=colorise(match[row, col], 'jet', 0.0, 1.0), linewidth=0.5, markersize=1.0)
-                    # if match_idx is not None:
-                    #     for i, (next, pos) in enumerate(zip(match_idx, position_valid)): # [3,]
-                    #             if next < len(position_valid): # not dustbin
-                    #                 plt.plot([pos[0], position_valid[next][0]], [pos[1], position_valid[next][1]], '-', c=colorise(match[i, next], 'jet', 0.0, 1.0))
-                    #                 plt.quiver(pos[0], pos[1], position_valid[next][0] - pos[0], position_valid[next][1] - pos[1], 
-                    #                         color=colorise(match[i, next], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
-                    # plt.colorbar() # MatplotlibDeprecationWarning: Auto-removal of grids by pcolor() and pcolormesh() is deprecated since 3.5 and will be removed two minor releases later; please call grid(False) first.
-                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                    plt.savefig(imname, bbox_inches='tight', dpi=400)
-                    plt.close()
-
-                    # match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
-                    
-                    # impath = os.path.join(logdir, 'vector_top2')
+                    # impath = os.path.join(logdir, 'vector_pred')
                     # if not os.path.exists(impath):
                     #     os.mkdir(impath)
                     # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
@@ -253,15 +225,36 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # plt.axis('off')
                     # plt.grid(False)
 
-                    # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-                    # for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
-                    #     for s, n in zip(score, next):
-                    #         if n < len(position_valid):
-                    #             plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
-                    
+                    # # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=1.0, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    # for row, col in zip(rows, cols):
+                    #     plt.plot([position_valid[row, 0], position_valid[col, 0]], [position_valid[row, 1], position_valid[col, 1]], 'o-', c=colorise(match[row, col], 'jet', 0.0, 1.0), linewidth=0.5, markersize=1.0)
                     # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     # plt.savefig(imname, bbox_inches='tight', dpi=400)
                     # plt.close()
+
+                    match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
+                    
+                    impath = os.path.join(logdir, 'vector_top2')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    print('saving', imname)
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.grid(False)
+
+                    # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
+                        for s, n in zip(score, next):
+                            if n < len(position_valid):
+                                plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
+                    
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    plt.close()
 
                     # attention = attentions[si, -1] # [4, 300, 300]
 
