@@ -78,12 +78,12 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, xbound: list, ybound: list, match_threshold=0.2, reduction='mean') -> None:
+    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, reduction='mean') -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
         self.dx, self.bx, _ = gen_dx_bx(xbound, ybound)
-        self.match_threshold = match_threshold
+        self.cdist_threshold = cdist_threshold # distance threshold in meter
         self.reduction = reduction
 
         self.ce_fn = torch.nn.CrossEntropyLoss()
@@ -134,12 +134,16 @@ class GraphLoss(nn.Module):
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
                 # nearest ground truth vectors
-                nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
+                nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
+                # nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
                 cdist_mean = torch.mean(cdist[torch.arange(len(nearest)), nearest]) # mean of [N,] shaped tensor
                 if len(nearest) > 1: # at least two vertices
-                    nearest_ins = [pts_ins_list[n] for n in nearest]
-                    for i in range(max(nearest_ins)+1):
-                        indices = [ni for ni, x in enumerate(nearest_ins) if x == i]
+                    nearest_ins = []
+                    for n, d in zip(nearest, nearest_dist):
+                        nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
+                    # nearest_ins = [pts_ins_list[n] for n, d in zip(nearest, nearest_dist)] # [M,] nearest instance ID
+                    for i in range(max(nearest_ins)+1): # for all instance IDs
+                        indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
                         ins_order = [pts_ins_order[nearest[oi]] for oi in indices]
                         indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
                         match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0

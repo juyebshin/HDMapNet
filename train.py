@@ -67,11 +67,14 @@ def train(args):
 
     if args.finetune:
         model.load_state_dict(torch.load(args.modelf), strict=False)
-        for name, param in model.named_parameters():
-            if 'bevencode.up' in name or 'bevencode.layer3' in name:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+        # for name, param in model.named_parameters():
+        #     if 'bev_backbone' in name:
+        #         param.requires_grad = True
+        #         logger.info("====="
+        #             f"finetuning {name}..."
+        #             "=====")
+        #     else:
+        #         param.requires_grad = False
     model.cuda()
 
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -217,7 +220,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/max_vertices_debug_v2')
+    parser.add_argument("--logdir", type=str, default='./runs/match_align_threshold')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
