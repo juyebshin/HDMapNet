@@ -69,12 +69,12 @@ def train(args):
         model.load_state_dict(torch.load(args.modelf), strict=False)
         # for name, param in model.named_parameters():
         #     if 'bev_backbone' in name:
-        #         param.requires_grad = True
+        #         param.requires_grad = False
         #         logger.info("====="
-        #             f"finetuning {name}..."
+        #             f"freezing {name}..."
         #             "=====")
         #     else:
-        #         param.requires_grad = False
+        #         param.requires_grad = True
     model.cuda()
 
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
