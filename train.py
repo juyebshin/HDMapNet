@@ -7,6 +7,7 @@ from tensorboardX import SummaryWriter
 import argparse
 
 import torch
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss, GraphLoss
 
@@ -132,6 +133,9 @@ def train(args):
                 dt_loss = dt_loss_fn(distance, distance_gt)
             else:
                 dt_loss = 0
+                distance = F.interpolate(distance, scale_factor=2, mode='bilinear', align_corners=True) # [b, 256, 200, 400]
+                distance = torch.sum(distance, dim=1, keepdim=True) # b, 1, 200, 400
+                # normalize 0~1?
             
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
             
@@ -158,7 +162,7 @@ def train(args):
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
                             # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
-                            f"DT loss: {dt_loss.item():>7.4f}    "
+                            f"DT loss: {(dt_loss.item() if args.distance_reg else dt_loss):>7.4f}    "
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
                             f"Seg loss: {seg_loss.item():>7.4f}    "
@@ -181,7 +185,8 @@ def train(args):
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0:
-                    distance = distance.relu().clamp(max=args.dist_threshold)
+                    if args.distance_reg:
+                        distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
                     visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
@@ -220,7 +225,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/match_align_threshold')
+    parser.add_argument("--logdir", type=str, default='./runs/feature_embedding')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -275,7 +280,7 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false')
+    parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config, always true for VectorMapNet

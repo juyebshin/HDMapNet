@@ -62,6 +62,15 @@ def sample_dt(vertices, distance: Tensor, threshold: int, s: int = 8):
     embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
     return embedding
 
+def sample_feat(vertices, feature: Tensor):
+    """ Extract feature patches around vertices """
+    # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
+    # feature: (b, 256, 25, 50) tensor
+    b, c, h, w = feature.shape # b, 256, 25, 50
+    embedding = feature.permute(0, 2, 3, 1) # [b, 25, 50, 256]
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
+    return embedding
+
 def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
     # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
@@ -223,6 +232,7 @@ class VectorMapNet(nn.Module):
         self.num_classes = data_conf['num_channels'] # 4
         self.cell_size = data_conf['cell_size']
         self.dist_threshold = data_conf['dist_threshold']
+        self.distance_reg = distance_reg
         self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
         self.resolution = data_conf['xbound'][-1] # 0.15
@@ -239,7 +249,8 @@ class VectorMapNet(nn.Module):
 
         # Graph neural network
         self.venc = GraphEncoder(self.feature_dim, [3, 32, 64, 128, 256]) # 3 -> 256
-        self.dtenc = GraphEncoder(self.feature_dim, [(self.num_classes-1)*self.cell_size*self.cell_size, 64, 128, 256]) # 192 -> 256
+        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
+        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
@@ -252,7 +263,7 @@ class VectorMapNet(nn.Module):
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, instance, direction are not used
         @ vertex: (b, 65, 25, 50)
-        @ distance: (b, 3, 200, 500)
+        @ distance: (b, 3, 200, 400)
         """
         
         semantic, distance, vertex, instance, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
@@ -291,7 +302,12 @@ class VectorMapNet(nn.Module):
         vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
 
         # Extract distance transform
-        dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 64] tensor
+        if self.distance_reg:
+            dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 193] tensor
+        else:
+            # distance: feature [b, 256, 100, 200]
+            distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
+            dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
