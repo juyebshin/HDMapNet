@@ -103,7 +103,7 @@ def main(args):
     # train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
-    model = get_model(args.model, data_conf, False, False, args.embedding_dim, False, args.angle_class, True, True)
+    model = get_model(args.model, data_conf, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     export_vectormapnet_to_json(model, val_loader, args.angle_class, args)
@@ -131,6 +131,7 @@ if __name__ == '__main__':
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
+    parser.add_argument("--sample_dist", type=float, default=1.5)
 
     # embedding config
     parser.add_argument("--embedding_dim", type=int, default=16)
@@ -139,9 +140,11 @@ if __name__ == '__main__':
     parser.add_argument('--angle_class', type=int, default=36)
     
     # distance transform config
+    parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
+    parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
 
     # VectorMapNet config
