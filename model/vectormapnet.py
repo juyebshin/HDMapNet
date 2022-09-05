@@ -1,3 +1,4 @@
+from nis import match
 from tkinter.messagebox import NO
 from turtle import forward
 from copy import deepcopy
@@ -253,9 +254,8 @@ class VectorMapNet(nn.Module):
         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
-
-        bin_score = nn.Parameter(torch.tensor(1.))
-        self.register_parameter('bin_score', bin_score)
+        
+        self.match_classifier = MLP([self.feature_dim*2, self.feature_dim, 1], False)
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
@@ -335,9 +335,15 @@ class VectorMapNet(nn.Module):
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
-        # Adjacency matrix score as inner product of all nodes
-        matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
+        # Adjacency matrix as [2d, N, N] as in STSU
+        graph_embedding = graph_embedding.unsqueeze(-1) # [b, 256, N, 1]
+        graph_embedding = graph_embedding.repeat(1, 1, 1, graph_embedding.shape[2]) # [b, 256, N, N], column vectors
+        matches = torch.cat([graph_embedding, graph_embedding.permute(0, 1, 3, 2)], 1) # [b, 512, N, N]
+        b, d, N, M = matches.shape # b, 512, N
+        matches = matches.reshape(b, d, N*N) # [b, 512, N*N]
+
+        matches = self.match_classifier(matches) # [b, 1, N*N]
+        matches = matches.squeeze(1).reshape(b, N, N) # [b, N, N]
         
         # Don't care self matches
         b, m, n = matches.shape
@@ -345,25 +351,9 @@ class VectorMapNet(nn.Module):
         matches[diag_mask] = -1e9
 
         # Don't care bin matches
-        match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [B, N, N]
+        match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [b, N, N]
         matches = matches.masked_fill(match_mask == 0, -1e9)
-        
-        # Matching layer
-        if self.sinkhorn_iters > 0:
-            matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
-        else:
-            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-            matches = torch.cat( # [b, N+1, N+1]
-            [
-                torch.cat([matches, bins0], -1), # [b, N, N+1]
-                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-            ], 1)
-            matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
-        # matches.exp() should be probability
-
-        # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
+        # matches.sigmoid() should be probability
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 

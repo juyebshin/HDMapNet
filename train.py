@@ -189,7 +189,7 @@ def train(args):
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
-                    matches = matches.exp()
+                    matches = matches.sigmoid()
                     visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
                 
             counter += 1

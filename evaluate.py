@@ -80,21 +80,20 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
     
     if matches is not None and positions is not None and masks is not None:
-        # matches: [b, N+1, N+1]
+        # matches: [b, N, N]
         # positions: [b, N, 2], x y
         # masks: [b, N, 1]
         # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
         # vectors_gt: [b] list of [instance] list of dict
-        # matches_gt: [b, N, N+1]
+        # matches_gt: [b, N, N]
         # xbound: []
         # ybound: []
-        matches = matches[0].detach().cpu().float().numpy() # [N+1, N+1]
+        matches = matches[0].detach().cpu().float().numpy() # [N, N]
         positions = positions[0].detach().cpu().float().numpy() # [N, 3]
         masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
         attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
-        masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
-        matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
+        matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N, N]
         positions = positions * dx + bx # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
 
@@ -105,11 +104,11 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
         # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
 
-        matches = matches[masks_bins == 1][:, masks_bins == 1] # masked [M+1, M+1]
-        matches_nodust = matches[:-1, :-1] # [M, M]
-        rows, cols = np.where(matches_nodust > 0.2)
+        matches = matches[masks == 1][:, masks == 1] # masked [M+1, M+1]
+
+        rows, cols = np.where(matches > 0.8)
         for row, col in zip(rows, cols):
-            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], 'o-', c=cm.jet(matches_nodust[row, col]), linewidth=0.5, markersize=1.0)
+            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], 'o-', c=cm.jet(matches[row, col]), linewidth=0.5, markersize=1.0)
         # matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
         # for i, pos in enumerate(positions_valid): # [3,]
         #     if matches_idx is not None:
@@ -169,37 +168,14 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.axis('off')
 
         # matches_gt = np.triu(matches_gt, 1)[masks == 1][:, masks_bins == 1] # [M, M] upper triangle matrix without diagonal
-        matches_gt = matches_gt[masks_bins == 1][:, masks_bins == 1] # [M+1, M+1]
-        # matches_gt = matches_gt[:, :-1] # [M, M]
-        matches_idx = matches_gt.argmax(1) if len(matches_gt) > 0 else None # [M, ]
+        matches_gt = matches_gt[masks == 1][:, masks == 1] # [M, M]
         
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c='b', vmin=0.0, vmax=1.0)
-        for i, pos in enumerate(positions_valid): # [3,]
-            if matches_idx is not None:
-                match = matches_idx[i]
-                if matches_gt[i, match] == 1.0 and match < len(matches_gt)-1: # less then N
-                    # plt.plot([pos[0], positions_valid[match][0]], [pos[1], positions_valid[match][1]], '-', color=colorise(matches_gt[i, match], 'jet', 0.0, 1.0))
-                    plt.quiver(pos[0], pos[1], positions_valid[match][0] - pos[0], positions_valid[match][1] - pos[1], 
-                               color=cm.jet(matches_gt[i, match]), scale_units='xy', angles='xy', scale=1)
+        rows, cols = np.where(matches_gt > 0.5)
+
+        for row, col in zip(rows, cols):
+            plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], 'o-', c=cm.jet(matches_gt[row, col]), linewidth=0.5, markersize=1.0)
         
         writer.add_figure(f'{title}/match_aligned', fig, step)
-        plt.close()
-
-        # match_align_debug_v3
-        fig = plt.figure(figsize=(4, 2))
-        plt.xlim(-30, 30)
-        plt.ylim(-15, 15)
-        plt.axis('off')
-        # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-
-        matches_debug_nodust = matches_gt[:-1, :-1] # [M, M]
-        rows, cols = np.where(matches_debug_nodust > 0.5)
-        plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c='b', vmin=0.0, vmax=1.0)
-        for row, col in zip(rows, cols):
-            plt.quiver(positions_valid[row, 0], positions_valid[row, 1], positions_valid[col, 0] - positions_valid[row, 0], positions_valid[col, 1] - positions_valid[row, 1], 
-                               color=cm.jet(matches_debug_nodust[row, col]), scale_units='xy', angles='xy', scale=1)
-        
-        writer.add_figure(f'{title}/match_align_debug_v3', fig, step)
         plt.close()
 
         fig = plt.figure(figsize=(4, 2))
@@ -264,7 +240,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
             heatmap = vertex.softmax(1) # b, 65, 25, 50
-            matches = matches.exp() # b, N+1, N+1
+            matches = matches.sigmoid() # b, N+1, N+1
             vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
             intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
             total_intersects += intersects

@@ -86,7 +86,7 @@ class GraphLoss(nn.Module):
         self.cdist_threshold = cdist_threshold # distance threshold in meter
         self.reduction = reduction
 
-        self.ce_fn = torch.nn.CrossEntropyLoss()
+        self.bce_fn = torch.nn.BCEWithLogitsLoss()
         self.nll_fn = torch.nn.NLLLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
@@ -95,7 +95,7 @@ class GraphLoss(nn.Module):
         # semantics: [b, 3, N] log_softmax dim=1
         # masks: [b, N, 1]
         # vectors_gt: [b] list of [instance] list of dict
-        # matches = matches.exp()
+        # matches = matches.sigmoid()
 
         # iterate in batch
         cdist_list = []
@@ -105,7 +105,7 @@ class GraphLoss(nn.Module):
         semantics_gt = []
         matches_gt_debug = []
         for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
-            # match: [N, N+1]
+            # match: [N, N]
             # position: [N, 2]
             # semantic: [3, N]
             # mask: [N, 1] M ones
@@ -126,7 +126,7 @@ class GraphLoss(nn.Module):
                 [pts_type_list.append(line_type) for _ in pts] # semantic for all vectors 0, 1, 2
             
             position_gt = torch.tensor(np.array(pts_list)).float().cuda() # [P, 2] shaped tensor
-            match_gt = torch.zeros_like(match) # [N+1, N+1]
+            match_gt = torch.zeros_like(match) # [N, N]
             semantic_gt = torch.zeros_like(semantic) # [3, N]
             match_gt_debug = match_gt.clone()
 
@@ -193,50 +193,17 @@ class GraphLoss(nn.Module):
                         # match_gt[idx_pred, i_prev] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_prev] else 0.0
                         # match_gt[idx_pred, i_next] = 1.0 if i_prev is not None and pts_ins_list[idx_gt] == pts_ins_list[idx_next] else 0.0
                     
+                    match_gt = match_gt + match_gt.t()
+                    assert torch.max(match_gt) < 2.0, f"maximum value of match_gt expected no more than 1, but got: {torch.max(match_gt)}"
 
-                    match_gt_debug = match_gt.clone()
-                    match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
-                    # leave only one match along row dimension with closest vector
-                    multi_cols, = torch.where(match_gt_sum_backward > 1) # [num_cols]
-                    for multi_col in multi_cols:
-                        rows, = torch.where(match_gt[:, multi_col] > 0)
-                        match_gt[rows, multi_col] = 0.0
-                        _, min_row_idx = dist_map[rows, multi_col].min(0)
-                        match_gt[rows[min_row_idx], multi_col] = 1.0
-                    
-                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
-                    match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
-                    match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
-                    assert torch.min(match_gt[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt[:-1].sum(1))}"
-                    assert torch.max(match_gt[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt[:-1].sum(1))}"
-
-                    match_gt_sum_backward = match_gt[:, :-1].sum(0)
-                    match_gt[:, :-1][-1, match_gt_sum_backward == 0] = 1.0
-                    assert torch.min(match_gt[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt[:, :-1].sum(0))}"
-                    assert torch.max(match_gt[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt[:, :-1].sum(0))}"
-
-                    match_valid = match[mask_bins == 1][:, mask_bins == 1] # [M+1, M+1]
-                    match_gt_valid = match_gt[mask_bins == 1][:, mask_bins == 1] # [M, M+1]
-                    assert torch.min(match_gt_valid[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid[:-1].sum(1))}"
-                    assert torch.max(match_gt_valid[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid[:-1].sum(1))}"
-                    assert torch.min(match_gt_valid[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt_valid[:, :-1].sum(0))}"
-                    assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
+                    match_valid = match[mask == 1][:, mask == 1] # [M, M]
+                    match_gt_valid = match_gt[mask == 1][:, mask == 1] # [M, M]
 
                     # add minibatch dimension and class first
-                    match_valid = match_valid.unsqueeze(0).transpose(1, 2) # [1, M+1, M+1] class dim first
-                    match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M+1, M+1]
+                    match_valid = match_valid.unsqueeze(0) # [1, M, M]
+                    match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M, M]
 
-                    # backward col -> row
-                    match_gt_valid_backward = match_gt_valid.argmax(1) # col -> row [1, M+1]
-                    match_loss_backward = self.nll_fn(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
-
-                    # forward row -> col
-                    # match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
-                    match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
-                    match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
-
-                    match_loss = (match_loss_forward + match_loss_backward)
-                    # match_loss = match_loss_forward
+                    match_loss = self.bce_fn(match_valid, match_gt_valid)
 
                     semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
                     semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
@@ -263,7 +230,7 @@ class GraphLoss(nn.Module):
         cdist_batch = torch.stack(cdist_list) # [b,]
         mloss_batch = torch.stack(mloss_list) # [b,]
         semloss_batch = torch.stack(semloss_list) # [b,]
-        matches_gt = torch.stack(matches_gt) # [b, N+1, N+1]
+        matches_gt = torch.stack(matches_gt) # [b, N, N]
         semantics_gt = torch.stack(semantics_gt) # [b, 3, N]
         matches_gt_debug = torch.stack(matches_gt_debug) # [b, N+1, N+1]
 
