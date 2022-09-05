@@ -15,7 +15,7 @@ import torch
 import torchvision
 from yaml import parse
 
-from data.dataset import semantic_dataset, vectormap_dataset
+from data.dataset import semantic_dataset, vectormap_dataset, VectorMapNetDataset
 from data.const import CAMS, NUM_CLASSES
 from data.utils import get_proj_mat, perspective
 from model import get_model
@@ -399,6 +399,14 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
             
             for si in range(imgs.shape[0]):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], data_conf['match_threshold'])
+                idx = batchi*val_loader.batch_size + si
+                rec = val_loader.dataset.samples[idx]
+                scene_name = val_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
+                lidar_top_path = val_loader.dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+                base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+                base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
+
+                print(f'batch index {batchi:06}_{si:03}')
                 
                 # vector_gt = vectors_gt[si] # [instance] list of dict
 
@@ -426,7 +434,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'{base_name}.png')
                 print('saving', imname)
 
                 fig = plt.figure(figsize=(8, 3))
@@ -465,7 +473,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 impath = os.path.join(logdir, 'vector_pred_final')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'{base_name}.png')
                 print('saving', imname)
 
                 fig = plt.figure(figsize=(4, 2))
@@ -487,7 +495,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 impath = os.path.join(logdir, 'instance_pred')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                imname = os.path.join(impath, f'{base_name}.png')
                 print('saving', imname)
 
                 fig = plt.figure(figsize=(4, 2))
@@ -527,6 +535,52 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 # plt.close()
 
 
+def vis_vectormapnet_scene(dataroot, version, model, args):
+    data_conf = {
+        'image_size': (900, 1600),
+        'xbound': args.xbound,
+        'ybound': args.ybound
+    }
+
+    dataset = VectorMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
+    car_img = Image.open('icon/car.png')
+    
+    data_conf = {
+        'num_channels': NUM_CLASSES + 1,
+        'image_size': args.image_size,
+        'xbound': args.xbound,
+        'ybound': args.ybound,
+        'zbound': args.zbound,
+        'dbound': args.dbound,
+        'thickness': args.thickness,
+        'angle_class': args.angle_class,
+        'dist_threshold': args.dist_threshold, # 10.0
+        'cell_size': args.cell_size, # 8
+        'num_vectors': args.num_vectors, # 100
+        'feature_dim': args.feature_dim, # 256
+        'gnn_layers': args.gnn_layers, # ['self']*7
+        'sinkhorn_iterations': args.sinkhorn_iterations, # 100
+        'vertex_threshold': args.vertex_threshold, # 0.015
+        'match_threshold': args.match_threshold, # 0.1
+    } 
+
+    for idx in tqdm.tqdm(range(dataset.__len__())):
+        rec = dataset.nusc.sample[idx]
+        scene_name = dataset.nusc.get('scene', rec['scene_token'])['name']
+        imgs, trans, rots, intrins, post_trans, post_rots = dataset.get_imgs(rec)
+        lidar_data, lidar_mask = dataset.get_lidar(rec)
+        car_trans, yaw_pitch_roll = dataset.get_ego_pose(rec)
+        vectors = dataset.get_vectors(rec)
+
+        lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+        base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+        base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
+
+        # imgs: 6, 3, 900, 1600
+        # intrins: 6, 3, 3
+        # trans: 6, 3, 1
+        # rots: 6, 3, 3
+
 
 def main(args):
     data_conf = {
@@ -536,6 +590,7 @@ def main(args):
         'ybound': args.ybound,
         'zbound': args.zbound,
         'dbound': args.dbound,
+        'sample_dist': args.sample_dist, # 1.5
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
@@ -558,6 +613,7 @@ def main(args):
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
     if args.model == 'VectorMapNet_cam':
         vis_vectormapnet(model, val_loader, args.logdir, data_conf)
+        # vis_vectormapnet_scene(args.dataroot, args.version, model, args)
 
 
 if __name__ == '__main__':
@@ -592,6 +648,7 @@ if __name__ == '__main__':
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
+    parser.add_argument("--sample_dist", type=float, default=1.5)
 
     # embedding config
     parser.add_argument('--instance_seg', action='store_true')

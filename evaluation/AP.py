@@ -80,6 +80,7 @@ def instance_mask_AP(AP_matrix, AP_count_matrix, inst_pred_mask, inst_label_mask
     # inst_label: N, C, H, W
     # confidence: N, max_instance_num
     N, C, H, W = inst_label_mask.shape
+    AP_batch = torch.zeros_like(AP_matrix)
     for n in range(N):
         for c in range(C):
             inst_pred_lines = get_line_instances_from_mask(inst_pred_mask[n, c], scale_x, scale_y)
@@ -88,6 +89,8 @@ def instance_mask_AP(AP_matrix, AP_count_matrix, inst_pred_mask, inst_label_mask
                 continue
             AP_matrix[c] += single_instance_line_AP(inst_pred_lines, confidence[n], inst_label_lines, thresholds, sampled_recalls=sampled_recalls)
             AP_count_matrix[c] += 1
+            AP_batch[c] += single_instance_line_AP(inst_pred_lines, confidence[n], inst_label_lines, thresholds, sampled_recalls=sampled_recalls)
+    return AP_batch
 
 
 def single_instance_line_AP(inst_pred_lines, inst_pred_confidence, inst_label_lines, thresholds, sampled_recalls):

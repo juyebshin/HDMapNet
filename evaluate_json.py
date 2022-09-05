@@ -1,5 +1,6 @@
 import torch
 import tqdm
+import csv
 
 from evaluation.dataset import HDMapNetEvalDataset
 from evaluation.chamfer_distance import semantic_mask_chamfer_dist_cum
@@ -15,6 +16,7 @@ def get_val_info(args):
         'xbound': args.xbound,
         'ybound': args.ybound,
         'thickness': args.thickness,
+        'sample_dist': args.sample_dist, # 1.5
     }
 
     dataset = HDMapNetEvalDataset(args.version, args.dataroot, args.eval_set, args.result_path, data_conf)
@@ -30,8 +32,11 @@ def get_val_info(args):
     AP_matrix = torch.zeros((args.max_channel, len(THRESHOLDS))).cuda()
     AP_count_matrix = torch.zeros((args.max_channel, len(THRESHOLDS))).cuda()
 
+    # save metric for every frame
+    results_list = []
+    results_list.append(['Frame', 'IoU', 'CD_p', 'CD_l', 'CD', 'AP'])
     print('running eval...')
-    for pred_map, confidence_level, gt_map in tqdm.tqdm(data_loader):
+    for batchi, (pred_map, confidence_level, gt_map) in enumerate(tqdm.tqdm(data_loader)):
         # iou
         pred_map = pred_map.cuda()
         confidence_level = confidence_level.cuda()
@@ -40,7 +45,7 @@ def get_val_info(args):
         intersect, union = get_batch_iou(pred_map, gt_map)
         CD1, CD2, num1, num2 = semantic_mask_chamfer_dist_cum(pred_map, gt_map, args.xbound[2], args.ybound[2], threshold=args.CD_threshold)
 
-        instance_mask_AP(AP_matrix, AP_count_matrix, pred_map, gt_map, args.xbound[2], args.ybound[2],
+        AP = instance_mask_AP(AP_matrix, AP_count_matrix, pred_map, gt_map, args.xbound[2], args.ybound[2],
                          confidence_level, THRESHOLDS, sampled_recalls=SAMPLED_RECALLS)
 
         total_intersect += intersect.cuda()
@@ -50,6 +55,21 @@ def get_val_info(args):
         total_CD_num1 += num1
         total_CD_num2 += num2
 
+        if args.bsz == 1:
+            rec = data_loader.dataset.samples[batchi]
+            scene_name = data_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
+            lidar_top_path = data_loader.dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+            frame_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+            frame_name = scene_name + '_' + frame_name # {scene_name}_{timestamp}
+            results_list.append([frame_name, (intersect/union).cpu().numpy(), (CD1/num1).cpu().numpy(), (CD2/num2).cpu().numpy(), ((CD1 + CD2) / (num1 + num2)).cpu().numpy(), AP.cpu().numpy()])
+
+    if args.bsz == 1:
+        filename = args.result_path.split('.')[0]
+        with open(f'{filename}.csv', 'w') as f:
+            print(f'saving number of vectors list to {filename}.csv...')
+            write = csv.writer(f)
+            write.writerows(results_list)
+    
     CD_pred = total_CD1 / total_CD_num1
     CD_label = total_CD2 / total_CD_num2
     CD = (total_CD1 + total_CD2) / (total_CD_num1 + total_CD_num2)
@@ -78,6 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--CD_threshold', type=int, default=5)
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
+    parser.add_argument("--sample_dist", type=float, default=1.5)
 
     args = parser.parse_args()
 
