@@ -30,7 +30,7 @@ class HDMapNetDataset(Dataset):
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
         self.nusc = NuScenes(version=version, dataroot=dataroot)
-        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size)
+        self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size, sample_dist=data_conf['sample_dist'])
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
 
@@ -144,7 +144,7 @@ class HDMapNetDataset(Dataset):
             imgname = os.path.join(self.nusc.dataroot, samp['filename'])
             img = Image.open(imgname)
 
-            resize, resize_dims = self.sample_augmentation()
+            resize, resize_dims = self.sample_augmentation() # [0.22, 0.142], [128, 352]
             img, post_rot, post_tran = img_transform(img, resize, resize_dims)
             # resize, resize_dims, crop, flip, rotate = self.sample_augmentation()
             # img, post_rot, post_tran = img_transform(img, resize, resize_dims, crop, flip, rotate)

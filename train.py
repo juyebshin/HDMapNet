@@ -48,6 +48,7 @@ def train(args):
         'ybound': args.ybound, # [-15.0, 15.0, 0.15]
         'zbound': args.zbound, # [-10.0, 10.0, 20.0]
         'dbound': args.dbound, # [4.0, 45.0, 1.0]
+        'sample_dist': args.sample_dist, # 1.5
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
@@ -256,6 +257,7 @@ if __name__ == '__main__':
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
+    parser.add_argument("--sample_dist", type=float, default=1.5)
 
     # embedding config
     parser.add_argument('--instance_seg', action='store_true')

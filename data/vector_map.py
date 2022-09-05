@@ -14,7 +14,7 @@ class VectorizedLocalMap(object):
                  line_classes=['road_divider', 'lane_divider'],
                  ped_crossing_classes=['ped_crossing'],
                  contour_classes=['road_segment', 'lane'],
-                 sample_dist=1.5, # sample vector points every <sample_dist> meter
+                 sample_dist=0., # sample vector points every <sample_dist> meter
                  num_samples=250,
                  padding=False,
                  normalize=False,
@@ -206,8 +206,11 @@ class VectorizedLocalMap(object):
 
     def sample_pts_from_line(self, line):
         if self.fixed_num < 0:
-            distances = np.arange(0, line.length, self.sample_dist)
-            sampled_points = np.array([list(line.interpolate(distance).coords) for distance in distances]).reshape(-1, 2)
+            if self.sample_dist > 0:
+                distances = np.arange(0, line.length, self.sample_dist)
+                sampled_points = np.array([list(line.interpolate(distance).coords) for distance in distances]).reshape(-1, 2)
+            else:
+                sampled_points = np.array(list(line.coords)).reshape(-1, 2)
         else:
             # fixed number of points, so distance is line.length / self.fixed_num
             distances = np.linspace(0, line.length, self.fixed_num)
