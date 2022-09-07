@@ -150,6 +150,61 @@ def log_optimal_transport(scores, alpha, iters: int):
     Z = Z - norm  # multiply probabilities by M+N
     return Z
 
+# Positional embedding from NeRF: https://github.com/bmild/nerf/blob/18b8aebda6700ed659cb27a0c348b737a5f6ab60/run_nerf_helpers.py
+def get_embedder(multires, i=0):
+
+    if i == -1:
+        return torch.nn.Identity(), 2
+
+    embed_kwargs = {
+        'include_input': True,
+        'input_dims': 2,
+        'max_freq_log2': multires-1,
+        'num_freqs': multires,
+        'log_sampling': True,
+        'periodic_fns': [torch.sin, torch.cos],
+    }
+
+    embedder_obj = Embedder(**embed_kwargs)
+    def embed(x, eo=embedder_obj): return eo.embed(x)
+    return embed, embedder_obj.out_dim
+
+class Embedder:
+
+    def __init__(self, **kwargs):
+
+        self.kwargs = kwargs
+        self.create_embedding_fn()
+
+    def create_embedding_fn(self):
+
+        embed_fns = []
+        d = self.kwargs['input_dims']
+        out_dim = 0
+        if self.kwargs['include_input']:
+            embed_fns.append(lambda x: x)
+            out_dim += d
+
+        max_freq = self.kwargs['max_freq_log2']
+        N_freqs = self.kwargs['num_freqs']
+
+        if self.kwargs['log_sampling']:
+            freq_bands = 2.**torch.linspace(0., max_freq, N_freqs)
+        else:
+            freq_bands = torch.linspace(2.**0., 2.**max_freq, N_freqs)
+
+        for freq in freq_bands:
+            for p_fn in self.kwargs['periodic_fns']:
+                embed_fns.append(lambda x, p_fn=p_fn,
+                                 freq=freq: p_fn(x * freq))
+                out_dim += d
+
+        self.embed_fns = embed_fns
+        self.out_dim = out_dim
+
+    def embed(self, inputs):
+        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
+
 class MultiHeadedAttention(nn.Module):
     """ Multi-head attention to increase model expressivitiy """
     def __init__(self, num_heads: int, d_model: int):
@@ -239,6 +294,7 @@ class VectorMapNet(nn.Module):
         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
         self.max_vertices = data_conf['num_vectors'] # 300
         self.feature_dim = data_conf['feature_dim'] # 256
+        # self.pos_freq = data_conf['pos_freq']
         self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
         # self.GNN_layers = gnn_layers
 
@@ -247,8 +303,12 @@ class VectorMapNet(nn.Module):
         # Intermediate representations: vertices, distance transform
         self.bev_backbone = HDMapNet(data_conf, False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
 
+        # Positional encoding
+        self.pe_fn, self.pe_dim = get_embedder(data_conf['pos_freq'])
+        
         # Graph neural network
-        self.venc = GraphEncoder(self.feature_dim, [3, 32, 64, 128, 256]) # 3 -> 256
+        # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
+        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256]) # 3 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
@@ -323,8 +383,8 @@ class VectorMapNet(nn.Module):
         vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x, y
 
         # Positional embedding (x, y, c)
-        pos_embedding = [torch.cat((v, s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, 3] tensor
-        pos_embedding = torch.stack(pos_embedding) # [b, N, 3]
+        pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
+        pos_embedding = torch.stack(pos_embedding) # [b, N, pe_dim+1]
 
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]

@@ -54,6 +54,7 @@ def train(args):
         'dist_threshold': args.dist_threshold, # 10.0
         'cell_size': args.cell_size, # 8
         'num_vectors': args.num_vectors, # 100
+        'pos_freq': args.pos_freq, # 10
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
         'sinkhorn_iterations': args.sinkhorn_iterations, # 100
@@ -226,7 +227,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/feature_embedding')
+    parser.add_argument("--logdir", type=str, default='./runs/positional_embedding')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -288,6 +289,10 @@ if __name__ == '__main__':
     # vertex location classification config, always true for VectorMapNet
     parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+
+    # positional encoding frequencies
+    parser.add_argument("--pos_freq", type=int, default=10,
+                        help="log2 of max freq for positional encoding (2D vertex location)")
 
     # semantic segmentation config
     parser.add_argument("--segmentation", action='store_true')
