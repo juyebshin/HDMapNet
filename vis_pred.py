@@ -413,7 +413,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 # impath = os.path.join(logdir, 'vector_gt')
                 # if not os.path.exists(impath):
                 #     os.mkdir(impath)
-                # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                # imname = os.path.join(impath, f'{base_name}.png')
                 # print('saving', imname)
 
                 # fig = plt.figure(figsize=(4, 2))
