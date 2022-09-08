@@ -597,6 +597,7 @@ def main(args):
         'dist_threshold': args.dist_threshold, # 10.0
         'cell_size': args.cell_size, # 8
         'num_vectors': args.num_vectors, # 100
+        'pos_freq': args.pos_freq, # 10
         'feature_dim': args.feature_dim, # 256
         'gnn_layers': args.gnn_layers, # ['self']*7
         'sinkhorn_iterations': args.sinkhorn_iterations, # 100
