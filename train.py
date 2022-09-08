@@ -283,13 +283,13 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
 
     # Hungarian matching cost coefficients
-    parser.add_argument("cost_class", type=float, default=1.0,
+    parser.add_argument("--cost_class", type=float, default=1.0,
                         help="Class coefficient in the matching cost")
-    parser.add_argument("cost_dist", type=float, default=5.0,
+    parser.add_argument("--cost_dist", type=float, default=5.0,
                         help="L2 distance coefficient in the matching cost")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false') # store_true
+    parser.add_argument("--distance_reg", action='store_true') # store_true
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config, always true for VectorMapNet
