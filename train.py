@@ -89,7 +89,7 @@ def train(args):
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
     vt_loss_fn = CEWithSoftmaxLoss().cuda()
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound, NUM_CLASSES).cuda()
 
     model.train()
     counter = 0
@@ -227,7 +227,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/positional_embedding')
+    parser.add_argument("--logdir", type=str, default='./runs/match_align_debug_v4')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
@@ -258,7 +258,7 @@ if __name__ == '__main__':
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
-    parser.add_argument("--sample_dist", type=float, default=1.5)
+    parser.add_argument("--sample_dist", type=float, default=1.5) # 1.5
 
     # embedding config
     parser.add_argument('--instance_seg', action='store_true')
@@ -282,8 +282,14 @@ if __name__ == '__main__':
     parser.add_argument("--scale_match", type=float, default=0.005, # 1.0
                         help="Scale of matching loss")
 
+    # Hungarian matching cost coefficients
+    parser.add_argument("cost_class", type=float, default=1.0,
+                        help="Class coefficient in the matching cost")
+    parser.add_argument("cost_dist", type=float, default=5.0,
+                        help="L2 distance coefficient in the matching cost")
+
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_true')
+    parser.add_argument("--distance_reg", action='store_false') # store_true
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config, always true for VectorMapNet
