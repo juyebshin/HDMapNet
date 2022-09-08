@@ -106,7 +106,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
         matches = matches[masks == 1][:, masks == 1] # masked [M+1, M+1]
 
-        rows, cols = np.where(matches > 0.8)
+        rows, cols = np.where(matches > 0.7)
         for row, col in zip(rows, cols):
             plt.plot([positions_valid[row, 0], positions_valid[col, 0]], [positions_valid[row, 1], positions_valid[col, 1]], 'o-', c=cm.jet(matches[row, col]), linewidth=0.5, markersize=1.0)
         # matches_idx = matches.argmax(1) if len(matches) > 0 else None # [M, ]
@@ -192,13 +192,13 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.close()
     
     if semantics is not None and semantics_gt is not None:
-        # semantics: [b, 3, N]
-        # semantics_gt: [b, 3, N]
-        semantic = semantics[0].exp().detach().cpu().float().numpy() # [3, N]
-        semantic_gt = semantics_gt[0].detach().cpu().float().numpy().astype('uint8') # [3, N]
-        
+        # semantics: [b, 4, N] 0: divider, 1: ped-crossing, 2: boundary, 3: no class
+        # semantics_gt: [b, N]
+        semantic = semantics[0].exp().detach().cpu().float().numpy() # [4, N]
+        semantic_gt = semantics_gt[0].detach().cpu().float().numpy().astype('uint8') # [N]
+
         semantic_onehot = semantic.argmax(0)[masks == 1] # [M]
-        semantic_gt_onehot = semantic_gt.argmax(0)[masks == 1] # [M]
+        semantic_gt_onehot = semantic_gt[masks == 1] # [M]
 
         # Semantic prediction
         fig = plt.figure(figsize=(4, 2))
