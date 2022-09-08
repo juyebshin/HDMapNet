@@ -109,7 +109,6 @@ class GraphLoss(nn.Module):
         semloss_list = []
         matches_gt = []
         semantics_gt = []
-        matches_gt_debug = []
         for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
             # match: [N, N+1]
             # position: [N, 2] pixel coords
