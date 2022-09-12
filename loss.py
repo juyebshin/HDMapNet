@@ -84,9 +84,9 @@ class GraphLoss(nn.Module):
         
         # patch_size: [30.0, 60.0] list
         self.dx, self.bx, self.nx = gen_dx_bx(xbound, ybound)
-        self.bound = (np.array(self.dx)/2 - np.array(self.bx))
+        self.bound = (np.array(self.dx)/2 - np.array(self.bx)) # [30.0, 15.0]
         self.num_classes = num_classes
-        self.cdist_threshold = cdist_threshold / self.bound.sum() # distance threshold in meter
+        self.cdist_threshold = cdist_threshold / self.bound.sum() # norlamize distance threshold in meter / 45.0
         self.reduction = reduction
 
         self.cost_class = cost_class
@@ -138,10 +138,10 @@ class GraphLoss(nn.Module):
             semantic_gt = torch.full(semantic.shape[1:], self.num_classes, dtype=torch.int64, device=semantic.device) # [N] 3: no class
 
             if len(position_gt) > 0 and len(position_valid) > 0:
-                match_mat = torch.zeros([position_gt.shape[0], position_gt.shape[0]], dtype=torch.float, device=match.device)
-                for k in range(max(pts_ins_list)+1):
-                    ins_indices = [idx for idx, x in enumerate(pts_ins_list) if x == k]
-                    match_mat[ins_indices[:-1], ins_indices[1:]] = 1.0
+                # match_mat = torch.zeros([position_gt.shape[0], position_gt.shape[0]], dtype=torch.float, device=match.device)
+                # for k in range(max(pts_ins_list)+1):
+                #     ins_indices = [idx for idx, x in enumerate(pts_ins_list) if x == k]
+                #     match_mat[ins_indices[:-1], ins_indices[1:]] = 1.0
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
                 cost_class = -semantic_valid.permute(1, 0)[:, pts_type_list] # [M, P]
@@ -149,19 +149,30 @@ class GraphLoss(nn.Module):
                 # nearest ground truth vectors
                 nearest_dist, nearest = cdist.min(0) # [P, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
                 pred_indices, gt_indices = linear_sum_assignment(cost.cpu()) # bipartite matching, M indices
-                # distance threshold
-                # thres_idx = torch.where(cdist[pred_indices, gt_indices] < self.cdist_threshold)[0]
-                # pred_indices = pred_indices[thres_idx.cpu()]
-                # gt_indices = gt_indices[thres_idx.cpu()]
-                match_mat = match_mat[gt_indices, :]
-                match_mat = match_mat[:, gt_indices] # [M, M]
-                for i1, pi1 in enumerate(pred_indices):
-                    for i2, pi2 in enumerate(pred_indices):
-                        match_gt[pi1, pi2] = match_mat[i1, i2]
+                nearest_ins = []
+                for p, g in zip(pred_indices, gt_indices):
+                    nearest_ins.append(pts_ins_list[g] if cdist[p, g] < self.cdist_threshold else -1)
+                    semantic_gt[p] = pts_type_list[g] if cdist[p, g] < self.cdist_threshold else self.num_classes
+                for i in range(max(nearest_ins) + 1): # for all instance IDs
+                    indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
+                    ins_order = [pts_ins_order[gt_indices[oi]] for oi in indices]
+                    indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
+                    match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0
+                
+                # # distance threshold
+                # thres_idx = (cdist[pred_indices, gt_indices] < self.cdist_threshold).cpu()
+                # pred_indices = pred_indices[thres_idx] # thres_idx.cpu()
+                # gt_indices = gt_indices[thres_idx]
+                # match_mat = match_mat[gt_indices, :]
+                # # if match_mat.ndim < 2:
+                # #     match_mat = match_mat.unsqueeze(0)
+                # match_mat = match_mat[:, gt_indices] # [M, M]
+                # for i1, pi1 in enumerate(pred_indices):
+                #     for i2, pi2 in enumerate(pred_indices):
+                #         match_gt[pi1, pi2] = match_mat[i1, i2]
 
-                semantic_gt[pred_indices] = torch.tensor(pts_type_list, device=semantic_gt.device)[gt_indices]
-                # nearest = cdist.argmin(-1) # [M,] shaped tensor, index of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
-                cdist_mean = torch.mean(cdist[nearest, torch.arange(len(nearest))]) # mean of [N,] shaped tensor
+                # semantic_gt[pred_indices] = torch.tensor(pts_type_list, device=semantic_gt.device)[gt_indices]
+                cdist_mean = torch.mean(cdist[pred_indices, gt_indices]) # mean of [N,] shaped tensor
 
                 match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
                 # leave only one match along row dimension with closest vector
