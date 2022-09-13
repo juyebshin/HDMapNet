@@ -308,9 +308,9 @@ class VectorMapNet(nn.Module):
         
         # Graph neural network
         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
-        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256]) # 3 -> 256
+        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 128]) # 43 -> 128 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
-        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 256
+        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 128]) # 192/256 -> 128 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
