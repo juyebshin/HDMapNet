@@ -86,7 +86,7 @@ class GraphLoss(nn.Module):
         self.dx, self.bx, self.nx = gen_dx_bx(xbound, ybound)
         self.bound = (np.array(self.dx)/2 - np.array(self.bx)) # [30.0, 15.0]
         self.num_classes = num_classes
-        self.cdist_threshold = cdist_threshold / self.bound.sum() # norlamize distance threshold in meter / 45.0
+        self.cdist_threshold = np.linalg.norm(cdist_threshold / (2*self.bound)) # norlamize distance threshold in meter / 45.0
         self.reduction = reduction
 
         self.cost_class = cost_class
@@ -104,7 +104,7 @@ class GraphLoss(nn.Module):
         # matches = matches.exp()
 
         # iterate in batch
-        cdist_list = []
+        closs_list = []
         mloss_list = []
         semloss_list = []
         matches_gt = []
@@ -116,7 +116,7 @@ class GraphLoss(nn.Module):
             # mask: [N, 1] M ones
             # vector_gt: [instance] list of dict
             mask = mask.squeeze(-1) # [N,]
-            position_valid = position / (torch.tensor(self.nx).cuda()-1) # normalize 0~1, [N, 2]
+            position_valid = position / (torch.tensor(self.nx, device=position.device)-1) # normalize 0~1, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y
             semantic_valid = semantic[:, mask == 1] # [4, M]
             
@@ -133,7 +133,7 @@ class GraphLoss(nn.Module):
                 [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
                 [pts_type_list.append(line_type) for _ in pts] # semantic for all vectors 0, 1, 2
             
-            position_gt = torch.tensor(np.array(pts_list)).float().cuda() # [P, 2] shaped tensor
+            position_gt = torch.tensor(np.array(pts_list), device=position.device).float() # [P, 2] shaped tensor
             match_gt = torch.zeros_like(match) # [N+1, N+1]
             semantic_gt = torch.full(semantic.shape[1:], self.num_classes, dtype=torch.int64, device=semantic.device) # [N] 3: no class
 
@@ -145,11 +145,11 @@ class GraphLoss(nn.Module):
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
                 cost_class = -semantic_valid.permute(1, 0)[:, pts_type_list] # [M, P]
-                cost = self.cost_dist*cdist + self.cost_class*cost_class.detach()
+                cost = self.cost_dist*cdist + self.cost_class*cost_class
                 # nearest ground truth vectors
-                nearest_dist, nearest = cdist.min(0) # [P, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
-                pred_indices, gt_indices = linear_sum_assignment(cost.cpu()) # bipartite matching, M indices
-                cdist_mean = torch.mean(cdist[pred_indices, gt_indices]) # mean of [N,] shaped tensor
+                pred_indices, gt_indices = linear_sum_assignment(cost.cpu().detach()) # bipartite matching, M indices
+                # L1 loss
+                coord_loss = F.l1_loss(position_valid[pred_indices], position_gt[gt_indices])
                 # nearest_ins = []
                 # for p, g in zip(pred_indices, gt_indices):
                 #     nearest_ins.append(pts_ins_list[g] if cdist[p, g] < self.cdist_threshold else -1)
@@ -221,20 +221,20 @@ class GraphLoss(nn.Module):
 
                     semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
                 else:
-                    match_loss = torch.tensor(0.0).float().cuda()
-                    semantic_loss = torch.tensor(0.0).float().cuda()
+                    match_loss = torch.tensor(0.0, dtype=torch.float, device=match_gt.device)
+                    semantic_loss = torch.tensor(0.0, dtype=torch.float, device=semantic_gt.device)
             else:
-                cdist_mean = torch.tensor(0.0).float().cuda()
-                match_loss = torch.tensor(0.0).float().cuda()
-                semantic_loss = torch.tensor(0.0).float().cuda()
+                coord_loss = torch.tensor(0.0, dtype=torch.float, device=position_gt.device)
+                match_loss = torch.tensor(0.0, dtype=torch.float, device=match_gt.device)
+                semantic_loss = torch.tensor(0.0, dtype=torch.float, device=semantic_gt.device)
             
-            cdist_list.append(cdist_mean)
+            closs_list.append(coord_loss)
             mloss_list.append(match_loss)
             semloss_list.append(semantic_loss)
             matches_gt.append(match_gt)
             semantics_gt.append(semantic_gt)
         
-        cdist_batch = torch.stack(cdist_list) # [b,]
+        closs_batch = torch.stack(closs_list) # [b,]
         mloss_batch = torch.stack(mloss_list) # [b,]
         semloss_batch = torch.stack(semloss_list) # [b,]
         matches_gt = torch.stack(matches_gt) # [b, N+1, N+1]
@@ -243,17 +243,17 @@ class GraphLoss(nn.Module):
         if self.reduction == 'none':
             pass
         elif self.reduction == 'mean':
-            cdist_batch = torch.mean(cdist_batch)
+            closs_batch = torch.mean(closs_batch)
             mloss_batch = torch.mean(mloss_batch)
             semloss_batch = torch.mean(semloss_batch)
         elif self.reduction == 'sum':
-            cdist_batch = torch.sum(cdist_batch)
+            closs_batch = torch.sum(closs_batch)
             mloss_batch = torch.sum(mloss_batch)
             semloss_batch = torch.sum(semloss_batch)
         else:
             raise NotImplementedError
         
-        return cdist_batch, mloss_batch, semloss_batch, matches_gt, semantics_gt
+        return closs_batch, mloss_batch, semloss_batch, matches_gt, semantics_gt
 
 
 class DiscriminativeLoss(nn.Module):

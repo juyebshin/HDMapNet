@@ -319,6 +319,7 @@ class VectorMapNet(nn.Module):
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes, kernel_size=1, bias=True)
+        self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, instance, direction are not used
@@ -393,6 +394,7 @@ class VectorMapNet(nn.Module):
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
+        offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
@@ -422,6 +424,11 @@ class VectorMapNet(nn.Module):
             ], 1)
             matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
         # matches.exp() should be probability
+
+        # Refinement offset in pixel coordinate
+        _, h, w = score_shape
+        offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2]
+        vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 
