@@ -88,11 +88,13 @@ class GraphLoss(nn.Module):
         self.num_classes = num_classes
         self.cdist_threshold = np.linalg.norm(cdist_threshold / (2*self.bound)) # norlamize distance threshold in meter / 45.0
         self.reduction = reduction
+        empty_weight = torch.ones(self.num_classes + 1)
+        empty_weight[-1] = 0.1
+        self.register_buffer('empty_weight', empty_weight)
 
         self.cost_class = cost_class
         self.cost_dist = cost_dist
 
-        self.ce_fn = torch.nn.CrossEntropyLoss()
         self.nll_fn = torch.nn.NLLLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
@@ -219,14 +221,14 @@ class GraphLoss(nn.Module):
                     semantic_valid = semantic_valid.unsqueeze(0) # [1, 4, M]
                     semantic_gt_valid = semantic_gt[mask == 1].unsqueeze(0) # [1, M]
 
-                    semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
+                    semantic_loss = F.nll_loss(semantic_valid, semantic_gt_valid, self.empty_weight)
                 else:
-                    match_loss = torch.tensor(0.0, dtype=torch.float, device=match_gt.device)
-                    semantic_loss = torch.tensor(0.0, dtype=torch.float, device=semantic_gt.device)
+                    match_loss = position_gt.new_tensor(0.0)
+                    semantic_loss = position_gt.new_tensor(0.0)
             else:
-                coord_loss = torch.tensor(0.0, dtype=torch.float, device=position_gt.device)
-                match_loss = torch.tensor(0.0, dtype=torch.float, device=match_gt.device)
-                semantic_loss = torch.tensor(0.0, dtype=torch.float, device=semantic_gt.device)
+                coord_loss = position_gt.new_tensor(0.0)
+                match_loss = position_gt.new_tensor(0.0)
+                semantic_loss = position_gt.new_tensor(0.0)
             
             closs_list.append(coord_loss)
             mloss_list.append(match_loss)
