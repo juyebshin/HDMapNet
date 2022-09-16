@@ -161,14 +161,16 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
             cur, next = single_inst_adj_list[0] # cur -> next
             init_cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur) # two or one
             single_inst_coords = np.expand_dims(positions[cur], 0) # [1, 2]
-            single_inst_confidence = prob[cur] # [1] np array
+            single_inst_confidence = np.expand_dims(prob[cur], 0) # [1, 1] np array
             cur_taken = [cur]
 
             for ici in init_cur_idx: # one or two
                 cur, next = single_inst_adj_list[0] # cur -> next
                 single_inst_adj_list = np.delete(single_inst_adj_list, 0, 0)
                 while True:
-                    if cur not in cur_taken:
+                    next_idx = np.where(single_inst_adj_list[:, :-1] == next)[0]
+                    next_adj = single_inst_adj_list[next_idx, -1]
+                    if cur not in cur_taken and cur in next_adj:
                         single_inst_coords = np.vstack((single_inst_coords, positions[cur])) # [num, 2]
                         single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [num, 1]
                         cur_taken.append(cur)
