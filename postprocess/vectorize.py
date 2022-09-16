@@ -108,7 +108,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     ----------
     @ positions: [N, 2]
     @ match: [N+1, N+1]
-    @ segmentation: [3, N] 
+    @ segmentation: [4, N] 
     @ mask: [N, 1] 
     @ patch_size: (30.0, 60.0)
 
@@ -133,14 +133,14 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     t2mat = match.new_full(match[:-1, :-1].shape, 0, dtype=torch.bool)
     t2mat = t2mat.scatter_(1, t2indices, 1) # [M, M]
     adj_mat = adj_mat & t2mat # [M, M]
-    segmentation = segmentation.exp() # [3, N]
-    seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [3, M] 0, 1, 2
-    segmentation = segmentation.cpu().numpy()[:, mask == 1] # [3, M]
+    segmentation = segmentation.exp() # [4, N]
+    seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [4, M] 0, 1, 2, 3
+    segmentation = segmentation.cpu().numpy()[:, mask == 1] # [4, M]
 
     confidences = []
     line_types = []
     simplified_coords = []
-    for i in range(seg_onehot.shape[0]): # 0, 1, 2
+    for i in range(seg_onehot.shape[0]-1): # 0, 1, 2
         single_mask = np.expand_dims(seg_onehot[i].astype('uint8'), 1) # [M, 1]
         single_match_mask = single_mask @ single_mask.T # [M, M] symmetric
 
@@ -161,14 +161,16 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
             cur, next = single_inst_adj_list[0] # cur -> next
             init_cur_idx, _ = np.where(single_inst_adj_list[:, :-1] == cur) # two or one
             single_inst_coords = np.expand_dims(positions[cur], 0) # [1, 2]
-            single_inst_confidence = prob[cur] # [1] np array
+            single_inst_confidence = np.expand_dims(prob[cur], 0) # [1, 1] np array
             cur_taken = [cur]
 
             for ici in init_cur_idx: # one or two
                 cur, next = single_inst_adj_list[0] # cur -> next
                 single_inst_adj_list = np.delete(single_inst_adj_list, 0, 0)
                 while True:
-                    if cur not in cur_taken:
+                    next_idx = np.where(single_inst_adj_list[:, :-1] == next)[0]
+                    next_adj = single_inst_adj_list[next_idx, -1]
+                    if cur not in cur_taken and cur in next_adj:
                         single_inst_coords = np.vstack((single_inst_coords, positions[cur])) # [num, 2]
                         single_inst_confidence = np.vstack((single_inst_confidence, prob[cur])) # [num, 1]
                         cur_taken.append(cur)

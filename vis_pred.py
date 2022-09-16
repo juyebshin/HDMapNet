@@ -434,7 +434,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.png')
+                imname = os.path.join(impath, f'{base_name}.jpg')
                 print('saving', imname)
 
                 fig = plt.figure(figsize=(8, 3))
@@ -455,18 +455,18 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                         x = np.array([pts[0] for pts in pix_coords], dtype='int')
                         y = np.array([pts[1] for pts in pix_coords], dtype='int')
                         for j in range(x.shape[0]-1):
-                            img = cv2.arrowedLine(img, (x[j], y[j]), (x[j+1], y[j+1]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
+                            img = cv2.line(img, (x[j], y[j]), (x[j+1], y[j+1]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
                     if i > 2:
                         img = cv2.flip(img, 1)
-                    img = cv2.resize(img, (320, 180), interpolation=cv2.INTER_AREA)
-                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+                    img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
+                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 2)
                     text_w, text_h = text_size
                     cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 2, cv2.LINE_AA)
                     ax.imshow(img)
                     
                 plt.subplots_adjust(wspace=0.0, hspace=0.0)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=300)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
                 # Vector map
@@ -485,7 +485,9 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     coord = coord * dx + bx # [-30, -15, 30, 15]
                     x = np.array([pt[0] for pt in coord])
                     y = np.array([pt[1] for pt in coord])
-                    plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                    plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
+                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
                     # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)

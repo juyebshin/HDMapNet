@@ -2,7 +2,7 @@ from matplotlib.cm import get_cmap
 import numpy as np
 from PIL import Image
 
-colors_plt = ['r', 'b', 'g', 'k']
+colors_plt = ['tab:red', 'tab:blue', 'tab:green', 'k']
 
 def colorise(input, cmap, vmin=None, vmax=None):
 
