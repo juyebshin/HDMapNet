@@ -88,6 +88,7 @@ def main(args):
         'ybound': args.ybound,
         'zbound': args.zbound,
         'dbound': args.dbound,
+        'sample_dist': args.sample_dist, # 1.5
         'thickness': args.thickness,
         'angle_class': args.angle_class,
         'dist_threshold': args.dist_threshold, # 10.0
@@ -113,7 +114,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # nuScenes config
-    parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('--dataroot', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
