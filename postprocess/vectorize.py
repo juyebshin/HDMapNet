@@ -231,6 +231,9 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
             # single_inst_coords = single_inst_coords.astype('int32') # [num, 3]
             # single_inst_coords = connect_by_adj_list(single_inst_coords, single_class_adj_list, single_class_adj_score)
             
+            if single_inst_coords.shape[0] < 2:
+                continue
+            
             simplified_coords.append(single_inst_coords) # [num, 2]
             confidences.append(single_inst_confidence.mean())
             line_types.append(i)
