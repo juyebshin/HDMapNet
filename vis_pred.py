@@ -459,10 +459,10 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     if i > 2:
                         img = cv2.flip(img, 1)
                     img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
-                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 2)
+                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 3)
                     text_w, text_h = text_size
                     cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 2, cv2.LINE_AA)
+                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
                     ax.imshow(img)
                     
                 plt.subplots_adjust(wspace=0.0, hspace=0.0)
