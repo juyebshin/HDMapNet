@@ -89,7 +89,7 @@ def train(args):
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
     vt_loss_fn = CEWithSoftmaxLoss().cuda()
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound, NUM_CLASSES).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
 
     model.train()
     counter = 0
@@ -282,12 +282,6 @@ if __name__ == '__main__':
                         help="Scale of Chamfer distance loss")
     parser.add_argument("--scale_match", type=float, default=0.005, # 1.0
                         help="Scale of matching loss")
-
-    # Hungarian matching cost coefficients
-    parser.add_argument("--cost_class", type=float, default=1.0,
-                        help="Class coefficient in the matching cost")
-    parser.add_argument("--cost_dist", type=float, default=5.0,
-                        help="L2 distance coefficient in the matching cost")
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true') # store_true

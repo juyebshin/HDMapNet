@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 def gen_dx_bx(xbound, ybound):
     dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
@@ -79,22 +78,16 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, xbound: list, ybound: list, num_classes:int=3, cdist_threshold: float=1.5, reduction='mean', cost_class:float=1.0, cost_dist:float=5.0) -> None:
+    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, reduction='mean', cost_class:float=1.0, cost_dist:float=5.0) -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
         self.dx, self.bx, self.nx = gen_dx_bx(xbound, ybound)
         self.bound = (np.array(self.dx)/2 - np.array(self.bx)) # [30.0, 15.0]
-        self.num_classes = num_classes
         self.cdist_threshold = np.linalg.norm(cdist_threshold / (2*self.bound)) # norlamize distance threshold in meter / 45.0
         self.reduction = reduction
-        empty_weight = torch.ones(self.num_classes + 1)
-        empty_weight[-1] = 0.1
-        self.register_buffer('empty_weight', empty_weight)
 
-        self.cost_class = cost_class
-        self.cost_dist = cost_dist
-
+        self.ce_fn = torch.nn.CrossEntropyLoss()
         self.nll_fn = torch.nn.NLLLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
@@ -114,7 +107,7 @@ class GraphLoss(nn.Module):
         for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
             # match: [N, N+1]
             # position: [N, 2] pixel coords
-            # semantic: [4, N]
+            # semantic: [3, N]
             # mask: [N, 1] M ones
             # vector_gt: [instance] list of dict
             mask = mask.squeeze(-1) # [N,]
@@ -137,43 +130,26 @@ class GraphLoss(nn.Module):
             
             position_gt = torch.tensor(np.array(pts_list), device=position.device).float() # [P, 2] shaped tensor
             match_gt = torch.zeros_like(match) # [N+1, N+1]
-            semantic_gt = torch.full(semantic.shape[1:], self.num_classes, dtype=torch.int64, device=semantic.device) # [N] 3: no class
+            semantic_gt = torch.zeros_like(semantic) # [3, N]
 
             if len(position_gt) > 0 and len(position_valid) > 0:
-                match_mat = torch.zeros([position_gt.shape[0], position_gt.shape[0]], dtype=torch.float, device=match.device)
-                for k in range(max(pts_ins_list)+1):
-                    ins_indices = [idx for idx, x in enumerate(pts_ins_list) if x == k]
-                    match_mat[ins_indices[:-1], ins_indices[1:]] = 1.0
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
-                cost_class = -semantic_valid.permute(1, 0)[:, pts_type_list] # [M, P]
-                cost = self.cost_dist*cdist + self.cost_class*cost_class
-                # nearest ground truth vectors
-                pred_indices, gt_indices = linear_sum_assignment(cost.cpu().detach()) # bipartite matching, M indices
-                # L1 loss
-                coord_loss = F.l1_loss(position_valid[pred_indices], position_gt[gt_indices])
-                # nearest_ins = []
-                # for p, g in zip(pred_indices, gt_indices):
-                #     nearest_ins.append(pts_ins_list[g] if cdist[p, g] < self.cdist_threshold else -1)
-                #     semantic_gt[p] = pts_type_list[g] if cdist[p, g] < self.cdist_threshold else self.num_classes
-                # for i in range(max(nearest_ins) + 1): # for all instance IDs
-                #     indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
-                #     ins_order = [pts_ins_order[gt_indices[oi]] for oi in indices]
-                #     indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
-                #     match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0
-                
-                # distance threshold
-                thres_idx = (cdist[pred_indices, gt_indices] < self.cdist_threshold).cpu()
-                if len(thres_idx) > 1: # at least two vertices
-                    pred_indices = pred_indices[thres_idx] # thres_idx.cpu()
-                    gt_indices = gt_indices[thres_idx]
-                    match_mat = match_mat[gt_indices, :]
-                    match_mat = match_mat[:, gt_indices] # [M, M]
-                    for i1, pi1 in enumerate(pred_indices):
-                        for i2, pi2 in enumerate(pred_indices):
-                            match_gt[pi1, pi2] = match_mat[i1, i2]
+                nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
 
-                    semantic_gt[pred_indices] = torch.tensor(pts_type_list, device=semantic_gt.device)[gt_indices]
+                if len(nearest) > 1: # at least two vertices
+                    nearest_ins = []
+                    for n, d in zip(nearest, nearest_dist):
+                        nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
+                    for i in range(max(nearest_ins)+1): # for all instance IDs
+                        indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
+                        ins_order = [pts_ins_order[nearest[oi]] for oi in indices]
+                        indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
+                        match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0
+                    dist_map = torch.cdist(position_valid, position_valid)
+
+                    for idx_pred, idx_gt in enumerate(nearest):
+                        semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
                     
                     match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
                     # leave only one match along row dimension with closest vector
@@ -181,9 +157,9 @@ class GraphLoss(nn.Module):
                     for multi_col in multi_cols:
                         rows, = torch.where(match_gt[:, multi_col] > 0)
                         match_gt[rows, multi_col] = 0.0
-                        _, min_row_idx = cdist[rows, multi_col].min(0)
+                        _, min_row_idx = dist_map[rows, multi_col].min(0)
                         match_gt[rows[min_row_idx], multi_col] = 1.0
-                    
+
                     mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
                     match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
                     match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
@@ -218,11 +194,17 @@ class GraphLoss(nn.Module):
                     match_loss = (match_loss_forward + match_loss_backward)
                     # match_loss = match_loss_forward
 
-                    semantic_valid = semantic_valid.unsqueeze(0) # [1, 4, M]
-                    semantic_gt_valid = semantic_gt[mask == 1].unsqueeze(0) # [1, M]
+                    semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                    semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                    assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
+                    assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
+                    semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
 
-                    semantic_loss = F.nll_loss(semantic_valid, semantic_gt_valid, self.empty_weight)
+                    semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
+
+                    coord_loss = F.l1_loss(position_valid, position_gt[nearest])                
                 else:
+                    coord_loss = position_gt.new_tensor(0.0)
                     match_loss = position_gt.new_tensor(0.0)
                     semantic_loss = position_gt.new_tensor(0.0)
             else:

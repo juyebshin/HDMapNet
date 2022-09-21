@@ -318,7 +318,7 @@ class VectorMapNet(nn.Module):
         self.register_parameter('bin_score', bin_score)
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
-        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes, kernel_size=1, bias=True)
+        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
         self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
