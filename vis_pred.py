@@ -454,8 +454,8 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                         pix_coords = perspective(world_coords, P)
                         x = np.array([pts[0] for pts in pix_coords], dtype='int')
                         y = np.array([pts[1] for pts in pix_coords], dtype='int')
-                        for j in range(x.shape[0]-1):
-                            img = cv2.line(img, (x[j], y[j]), (x[j+1], y[j+1]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
+                        for j in range(1, x.shape[0]):
+                            img = cv2.line(img, (x[j-1], y[j-1]), (x[j], y[j]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
                     if i > 2:
                         img = cv2.flip(img, 1)
                     img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
@@ -626,7 +626,7 @@ if __name__ == '__main__':
     parser.add_argument("--logdir", type=str, default='./runs/match_align_debug_v3')
 
     # nuScenes config
-    parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('--dataroot', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
