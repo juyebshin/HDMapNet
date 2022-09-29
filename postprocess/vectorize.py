@@ -140,7 +140,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     confidences = []
     line_types = []
     simplified_coords = []
-    for i in range(seg_onehot.shape[0]-1): # 0, 1, 2
+    for i in range(seg_onehot.shape[0]): # 0, 1, 2
         single_mask = np.expand_dims(seg_onehot[i].astype('uint8'), 1) # [M, 1]
         single_match_mask = single_mask @ single_mask.T # [M, M] symmetric
 
