@@ -67,7 +67,7 @@ def train(args):
     # torch.cuda.set_device(args.local_rank)
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
 
     if args.finetune:
         model.load_state_dict(torch.load(args.modelf), strict=False)
@@ -141,6 +141,8 @@ def train(args):
                 # normalize 0~1?
             
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            if not args.refine:
+                cdist_loss = 0.0
             
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
@@ -169,7 +171,7 @@ def train(args):
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
                             f"Seg loss: {seg_loss.item():>7.4f}    "
-                            f"CD: {cdist_loss.item():.4f}")
+                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
 
                 write_log(writer, iou, total_cdist, 'train', counter)
                 writer.add_scalar('train/step_time', t1 - t0, counter)
@@ -300,6 +302,9 @@ if __name__ == '__main__':
 
     # semantic segmentation config
     parser.add_argument("--segmentation", action='store_true')
+
+    # vector refinement config
+    parser.add_argument("--refine", action='store_true')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total

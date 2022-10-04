@@ -299,7 +299,7 @@ def main(args):
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     print(eval_iou(model, val_loader))
@@ -376,6 +376,9 @@ if __name__ == '__main__':
 
     # semantic segmentation config
     parser.add_argument("--segmentation", action='store_true')
+
+    # vector refinement config
+    parser.add_argument("--refine", action='store_true')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total

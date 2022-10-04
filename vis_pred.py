@@ -547,25 +547,25 @@ def vis_vectormapnet_scene(dataroot, version, model, args):
     dataset = VectorMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     car_img = Image.open('icon/car.png')
     
-    data_conf = {
-        'num_channels': NUM_CLASSES + 1,
-        'image_size': args.image_size,
-        'xbound': args.xbound,
-        'ybound': args.ybound,
-        'zbound': args.zbound,
-        'dbound': args.dbound,
-        'thickness': args.thickness,
-        'angle_class': args.angle_class,
-        'dist_threshold': args.dist_threshold, # 10.0
-        'cell_size': args.cell_size, # 8
-        'num_vectors': args.num_vectors, # 100
-        'pos_freq': args.pos_freq, # 10
-        'feature_dim': args.feature_dim, # 256
-        'gnn_layers': args.gnn_layers, # ['self']*7
-        'sinkhorn_iterations': args.sinkhorn_iterations, # 100
-        'vertex_threshold': args.vertex_threshold, # 0.015
-        'match_threshold': args.match_threshold, # 0.1
-    } 
+    # data_conf = {
+    #     'num_channels': NUM_CLASSES + 1,
+    #     'image_size': args.image_size,
+    #     'xbound': args.xbound,
+    #     'ybound': args.ybound,
+    #     'zbound': args.zbound,
+    #     'dbound': args.dbound,
+    #     'thickness': args.thickness,
+    #     'angle_class': args.angle_class,
+    #     'dist_threshold': args.dist_threshold, # 10.0
+    #     'cell_size': args.cell_size, # 8
+    #     'num_vectors': args.num_vectors, # 100
+    #     'pos_freq': args.pos_freq, # 10
+    #     'feature_dim': args.feature_dim, # 256
+    #     'gnn_layers': args.gnn_layers, # ['self']*7
+    #     'sinkhorn_iterations': args.sinkhorn_iterations, # 100
+    #     'vertex_threshold': args.vertex_threshold, # 0.015
+    #     'match_threshold': args.match_threshold, # 0.1
+    # } 
 
     for idx in tqdm.tqdm(range(dataset.__len__())):
         rec = dataset.nusc.sample[idx]
@@ -609,7 +609,7 @@ def main(args):
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred)
+    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
@@ -688,6 +688,9 @@ if __name__ == '__main__':
 
     # semantic segmentation config
     parser.add_argument("--segmentation", action='store_true')
+
+    # vector refinement config
+    parser.add_argument("--refine", action='store_true')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
