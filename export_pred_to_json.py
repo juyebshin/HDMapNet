@@ -84,6 +84,7 @@ def main(args):
     data_conf = {
         'num_channels': NUM_CLASSES + 1,
         'image_size': args.image_size,
+        'backbone': args.backbone,
         'xbound': args.xbound,
         'ybound': args.ybound,
         'zbound': args.zbound,
@@ -119,6 +120,8 @@ if __name__ == '__main__':
 
     # model config
     parser.add_argument("--model", type=str, default='VectorMapNet_cam')
+    parser.add_argument("--backbone", type=str, default='efficientnet-b4',
+                        choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
     parser.add_argument("--bsz", type=int, default=4)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from efficientnet_pytorch import EfficientNet
-from torchvision.models.resnet import resnet18
+from torchvision.models.resnet import resnet18, resnet50
 
 
 class Up(nn.Module):
@@ -49,12 +49,72 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C):
+    def __init__(self, C, backbone='efficientnet-b4'):
         super(CamEncode, self).__init__()
         self.C = C
+        self.backbone = backbone
 
-        self.trunk = EfficientNet.from_pretrained("efficientnet-b0")
-        self.up1 = Up(320+112, self.C)
+        if 'efficientnet' in backbone:
+            self.trunk = EfficientNet.from_pretrained(backbone)
+        elif backbone == 'resnet-18':
+            self.trunk = resnet18(pretrained=True)
+        elif backbone == 'resnet-50':
+            self.trunk = resnet50(pretrained=True)
+        else:
+            raise NotImplementedError
+        
+        if backbone == 'efficientnet-b0':
+            channel = 320+112
+        elif backbone == 'efficientnet-b4':
+            channel = 448+160
+        elif backbone == 'efficientnet-b7':
+            channel = 640+224
+        elif backbone == 'resnet-18':
+            channel = 512+256
+        elif backbone == 'resnet-50':
+            channel = 2048+1024
+        else:
+            raise NotImplementedError
+
+        self.up1 = Up(channel, self.C) # 320+112
+
+        """
+        b0
+        reduction_1: torch.Size([1, 16, 112, 112])
+        reduction_2: torch.Size([1, 24, 56, 56])
+        reduction_3: torch.Size([1, 40, 28, 28])
+        reduction_4: torch.Size([1, 112, 14, 14])
+        reduction_5: torch.Size([1, 320, 7, 7])
+        reduction_6: torch.Size([1, 1280, 7, 7])
+
+        b4
+        reduction_1: torch.Size([1, 24, 112, 112])
+        reduction_2: torch.Size([1, 32, 56, 56])
+        reduction_3: torch.Size([1, 56, 28, 28])
+        reduction_4: torch.Size([1, 160, 14, 14])
+        reduction_5: torch.Size([1, 448, 7, 7])
+        reduction_6: torch.Size([1, 1792, 7, 7])
+
+        b7
+        reduction_1: torch.Size([1, 32, 112, 112])
+        reduction_2: torch.Size([1, 48, 56, 56])
+        reduction_3: torch.Size([1, 80, 28, 28])
+        reduction_4: torch.Size([1, 224, 14, 14])
+        reduction_5: torch.Size([1, 640, 7, 7])
+        reduction_6: torch.Size([1, 2560, 7, 7])
+
+        r18
+        x1: torch.Size([1, 64, 56, 56])
+        x2: torch.Size([1, 128, 28, 28])
+        x3: torch.Size([1, 256, 14, 14])
+        x4: torch.Size([1, 512, 7, 7])
+        
+        r50
+        x1: torch.Size([1, 256, 56, 56])
+        x2: torch.Size([1, 512, 28, 28])
+        x3: torch.Size([1, 1024, 14, 14])
+        x4: torch.Size([1, 2048, 7, 7])
+        """
 
     def get_eff_depth(self, x):
         # x: B*N, C, H, W
@@ -81,8 +141,29 @@ class CamEncode(nn.Module):
         x = self.up1(endpoints['reduction_5'], endpoints['reduction_4'])
         return x
 
+    def get_resnet_depth(self, x):
+        # x: B*N, C, H, W
+        # adapted from https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py#L266
+        x = self.trunk.conv1(x) # [B*N, 64, H/2, W/2]
+        x = self.trunk.bn1(x)
+        x = self.trunk.relu(x)
+        x = self.trunk.maxpool(x) # [B*N, 64, H/4, W/4]
+
+        x1 = self.trunk.layer1(x) # [B*N, 64 or 246, H/4, W/4]
+        x2 = self.trunk.layer2(x1) # [B*N, 128 or 512, H/8, W/8]
+        x3 = self.trunk.layer3(x2) # [B*N, 256 or 1024, H/16, W/16]
+        x4 = self.trunk.layer4(x3) # [B*N, 512 or 2048, H/32, W/32]
+
+        x = self.up1(x4, x3)
+        return x
+
     def forward(self, x):
-        return self.get_eff_depth(x)
+        if 'efficientnet' in self.backbone:
+            return self.get_eff_depth(x)
+        elif 'resnet' in self.backbone:
+            return self.get_resnet_depth(x)
+        else:
+            raise NotImplementedError
 
 
 class BevEncode(nn.Module):

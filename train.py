@@ -44,6 +44,7 @@ def train(args):
     data_conf = {
         'num_channels': NUM_CLASSES + 1, # 4
         'image_size': args.image_size,
+        'backbone': args.backbone,
         'xbound': args.xbound, # [-30.0, 30.0, 0.15]
         'ybound': args.ybound, # [-15.0, 15.0, 0.15]
         'zbound': args.zbound, # [-10.0, 10.0, 20.0]
@@ -228,7 +229,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/offset_dt')
+    parser.add_argument("--logdir", type=str, default='./runs/backbone_test')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
@@ -236,6 +237,8 @@ if __name__ == '__main__':
 
     # model config
     parser.add_argument("--model", type=str, default='VectorMapNet_cam')
+    parser.add_argument("--backbone", type=str, default='efficientnet-b4',
+                        choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
     parser.add_argument("--nepochs", type=int, default=30)
