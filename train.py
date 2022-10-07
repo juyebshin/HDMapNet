@@ -19,6 +19,8 @@ from evaluation.angle_diff import calc_angle_diff
 from model import get_model
 from evaluate import onehot_encoding, eval_iou, visualize
 
+import data.utils as utils
+
 
 def write_log(writer, ious, cdist, title, counter):
     writer.add_scalar(f'{title}/iou', torch.mean(ious[1:]), counter)
@@ -29,6 +31,8 @@ def write_log(writer, ious, cdist, title, counter):
 
 
 def train(args):
+    utils.init_distributed_mode(args)
+
     if not os.path.exists(args.logdir):
         os.mkdir(args.logdir)
     logging.basicConfig(filename=os.path.join(args.logdir, "results.log"),
@@ -64,13 +68,19 @@ def train(args):
     }
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
-    # torch.cuda.set_device(args.local_rank)
-
-    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
+    device = torch.device(args.device)
+    
+    train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.distributed)
     model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model.to(device)
+    
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model_without_ddp = model.module
 
     if args.finetune:
-        model.load_state_dict(torch.load(args.modelf), strict=False)
+        model_without_ddp.load_state_dict(torch.load(args.modelf), strict=False)
         # for name, param in model.named_parameters():
         #     if 'bev_backbone' in name:
         #         param.requires_grad = False
@@ -79,9 +89,8 @@ def train(args):
         #             "=====")
         #     else:
         #         param.requires_grad = True
-    model.cuda()
 
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt = torch.optim.Adam(model_without_ddp.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = StepLR(opt, 10, 0.1)
     writer = SummaryWriter(logdir=args.logdir)
 
@@ -98,6 +107,8 @@ def train(args):
     best_cd = 10.0
     last_idx = len(train_loader) - 1
     for epoch in range(args.nepochs):
+        if args.distributed:
+            train_loader.batch_sampler.sampler.set_epoch(epoch)
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
                      yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(train_loader):
             # vectors_gt: list of dict {'pts': array, 'pts_num': int, 'type': int}, each element of list is one instance of vectors
@@ -243,6 +254,8 @@ if __name__ == '__main__':
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)
@@ -252,6 +265,11 @@ if __name__ == '__main__':
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--vis_interval", type=int, default=200)
+
+    # distributed training config
+    parser.add_argument('--world_size', default=1, type=int,
+                        help='number of distributed processes')
+    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')

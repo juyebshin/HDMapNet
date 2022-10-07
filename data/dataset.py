@@ -7,6 +7,8 @@ from pyquaternion import Quaternion
 from nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
+from torch.utils.data import DataLoader, DistributedSampler
+
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data._utils.collate import default_collate
 from data.rasterize import preprocess_map
@@ -241,12 +243,21 @@ class VectorMapNetDataset(HDMapNetDataset):
         semantic_masks, instance_masks, distance_masks, vertex_masks, vectors = self.get_vector_map(rec)
         return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, vectors
     
-def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers):
+def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed):
     train_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=True)
     val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True, num_workers=nworkers, drop_last=True, collate_fn=collate_vectors)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers, collate_fn=collate_vectors)
+    if distributed:
+        train_sampler = DistributedSampler(train_dataset)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False)
+    else:
+        train_sampler = torch.utils.data.RandomSampler(train_dataset)
+        val_sampler = torch.utils.data.SequentialSampler(val_sampler)
+    
+    train_batch_sampler = torch.utils.data.BatchSampler(train_sampler, bsz, drop_last=True)
+
+    train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler, num_workers=nworkers, drop_last=True, collate_fn=collate_vectors)
+    val_loader = DataLoader(val_dataset, batch_size=bsz, sampler=val_sampler, drop_last=False, num_workers=nworkers, collate_fn=collate_vectors)
     return train_loader, val_loader
 
 def collate_vectors(batch):
