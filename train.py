@@ -309,7 +309,8 @@ if __name__ == '__main__':
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
-    parser.add_argument("--feature_dim", type=int, default=256)
+    parser.add_argument("--feature_dim", type=int, default=128,
+                        help="Dimension of embedding dimension. feature_dim*2 dimensional embedding after concat")
     parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
