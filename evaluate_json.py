@@ -82,7 +82,8 @@ def get_val_info(args):
         'CD_label': CD_label,
         'CD': CD,
         'Average_precision': AP_matrix / AP_count_matrix,
-        'Mean_average_precision': torch.mean((AP_matrix / AP_count_matrix), 1),
+        'AP_class': torch.mean((AP_matrix / AP_count_matrix), 1),
+        'AP_mean': torch.mean((AP_matrix / AP_count_matrix)),
     }
 
 
