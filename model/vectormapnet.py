@@ -312,16 +312,16 @@ class VectorMapNet(nn.Module):
         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256]) # 43 -> 64 -> 128 -> 256 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 128 -> 256
-        self.gnn = AttentionalGNN(self.feature_dim*2, data_conf['gnn_layers'])
-        self.final_proj = nn.Conv1d(self.feature_dim*2, self.feature_dim*2, kernel_size=1, bias=True)
+        self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
+        self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
         bin_score = nn.Parameter(torch.tensor(1.))
         self.register_parameter('bin_score', bin_score)
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
-        self.cls_head = nn.Conv1d(self.feature_dim*2, self.num_classes-1, kernel_size=1, bias=True)
+        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
         if self.refine:
-            self.offset_head = nn.Conv1d(self.feature_dim*2, 2, kernel_size=1, bias=True)
+            self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, instance, direction are not used
@@ -392,7 +392,7 @@ class VectorMapNet(nn.Module):
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        graph_embedding = torch.cat((self.venc(pos_embedding), self.dtenc(dt_embedding)), 1) # [b, 256, N]
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
