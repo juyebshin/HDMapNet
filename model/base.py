@@ -1,3 +1,4 @@
+from cv2 import norm
 import torch
 import torch.nn as nn
 
@@ -6,7 +7,7 @@ from torchvision.models.resnet import resnet18, resnet50
 
 
 class Up(nn.Module):
-    def __init__(self, in_channels, out_channels, scale_factor=2):
+    def __init__(self, in_channels, out_channels, scale_factor=2, norm_layer=nn.BatchNorm2d):
         super().__init__()
 
         self.up = nn.Upsample(scale_factor=scale_factor, mode='bilinear',
@@ -14,10 +15,10 @@ class Up(nn.Module):
 
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            norm_layer(out_channels),
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            norm_layer(out_channels),
             nn.ReLU(inplace=True)
         )
 
@@ -27,7 +28,7 @@ class Up(nn.Module):
         return self.conv(x1)
 
 class UpDT(nn.Module):
-    def __init__(self, in_channels, out_channels, scale_factor=2):
+    def __init__(self, in_channels, out_channels, scale_factor=2, norm_layer=nn.BatchNorm2d):
         super().__init__()
 
         self.up = nn.Upsample(scale_factor=scale_factor, mode='bilinear',
@@ -35,7 +36,7 @@ class UpDT(nn.Module):
 
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
+            norm_layer(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, out_channels, kernel_size=1, padding=0)
         )
@@ -49,7 +50,7 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C, backbone='efficientnet-b4'):
+    def __init__(self, C, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
         super(CamEncode, self).__init__()
         self.C = C
         self.backbone = backbone
@@ -76,7 +77,7 @@ class CamEncode(nn.Module):
         else:
             raise NotImplementedError
 
-        self.up1 = Up(channel, self.C) # 320+112
+        self.up1 = Up(channel, self.C, norm_layer=norm_layer) # 320+112
 
         """
         b0
@@ -167,7 +168,7 @@ class CamEncode(nn.Module):
 
 
 class BevEncode(nn.Module):
-    def __init__(self, inC, outC, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
+    def __init__(self, inC, outC, norm_layer=nn.BatchNorm2d, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
         super(BevEncode, self).__init__()
         trunk = resnet18(pretrained=False, zero_init_residual=True)
         self.conv1 = nn.Conv2d(inC, 64, kernel_size=7, stride=2, padding=3,
@@ -179,14 +180,14 @@ class BevEncode(nn.Module):
         self.layer2 = trunk.layer2
         self.layer3 = trunk.layer3
 
-        self.up1 = Up(64 + 256, 256, scale_factor=4)
+        self.up1 = Up(64 + 256, 256, scale_factor=4, norm_layer=norm_layer)
 
         self.segmentation = segmentation
         self.up2 = nn.Sequential( # final semantic segmentation prediction
             nn.Upsample(scale_factor=2, mode='bilinear',
                         align_corners=True),
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
+            norm_layer(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4 (num_classes)
         )
@@ -201,12 +202,12 @@ class BevEncode(nn.Module):
                 # b, 256, 200, 400
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
                 # b, 128, 200, 400
-                nn.BatchNorm2d(128),
+                norm_layer(128),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
                 # b, 3, 200, 400
             )
-            self.up3 = UpDT(256 + outC-1, outC, scale_factor=2)
+            self.up3 = UpDT(256 + outC-1, outC, scale_factor=2, norm_layer=norm_layer)
 
         self.vertex_pred = vertex_pred
         if vertex_pred:
@@ -214,13 +215,13 @@ class BevEncode(nn.Module):
                 # b, 256, 100, 200
                 nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
                 # b, 128, 100, 200
-                nn.BatchNorm2d(256),
+                norm_layer(256),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
                 # b, 256, 50, 100
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False), # 65: cell_size*cell_size + 1 (dustbin)
                 # b, 128, 50, 100
-                nn.BatchNorm2d(128),
+                norm_layer(128),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
                 # b, 128, 25, 50
@@ -230,24 +231,24 @@ class BevEncode(nn.Module):
 
         self.instance_seg = instance_seg
         if instance_seg:
-            self.up1_embedded = Up(64 + 256, 256, scale_factor=4)
+            self.up1_embedded = Up(64 + 256, 256, scale_factor=4, norm_layer=norm_layer)
             self.up2_embedded = nn.Sequential(
                 nn.Upsample(scale_factor=2, mode='bilinear',
                             align_corners=True),
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(128),
+                norm_layer(128),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, embedded_dim, kernel_size=1, padding=0),
             )
 
         self.direction_pred = direction_pred
         if direction_pred:
-            self.up1_direction = Up(64 + 256, 256, scale_factor=4)
+            self.up1_direction = Up(64 + 256, 256, scale_factor=4, norm_layer=norm_layer)
             self.up2_direction = nn.Sequential(
                 nn.Upsample(scale_factor=2, mode='bilinear',
                             align_corners=True),
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(128),
+                norm_layer(128),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(128, direction_dim, kernel_size=1, padding=0),
             )

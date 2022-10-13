@@ -229,7 +229,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
 
 
-def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
+def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0, is_master=False):
     # st
     graph_loss_fn = GraphLoss([-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15]).cuda()
 
@@ -260,7 +260,7 @@ def eval_iou(model, val_loader, writer=None, step=None, vis_interval=0):
             _, _, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
 
             if writer is not None and vis_interval > 0:
-                if counter % vis_interval == 0:                
+                if counter % vis_interval == 0 and is_master:                
                         distance = distance.relu().clamp(max=10.0).cuda() # b, 3, 200, 400
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)

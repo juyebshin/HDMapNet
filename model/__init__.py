@@ -4,7 +4,9 @@ from .lift_splat import LiftSplat
 from .pointpillar import PointPillar
 from .vectormapnet import VectorMapNet
 
-def get_model(method, data_conf, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, angle_class=36, distance_reg=True, vertex_pred=True, refine=False):
+import torch.nn as nn
+
+def get_model(method, data_conf, norm_layer_dict, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, angle_class=36, distance_reg=True, vertex_pred=True, refine=False):
     if method == 'lift_splat':
         model = LiftSplat(data_conf, instance_seg=instance_seg, embedded_dim=embedded_dim)
     elif method == 'HDMapNet_cam':
@@ -14,7 +16,7 @@ def get_model(method, data_conf, segmentation=True, instance_seg=True, embedded_
     elif method == 'HDMapNet_fusion':
         model = HDMapNet(data_conf, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=True, distance_reg=distance_reg, vertex_pred=vertex_pred)
     elif method == "VectorMapNet_cam":
-        model = VectorMapNet(data_conf, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=False, distance_reg=distance_reg, refine=refine)
+        model = VectorMapNet(data_conf, norm_layer_dict, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=False, distance_reg=distance_reg, refine=refine)
     else:
         raise NotImplementedError
 

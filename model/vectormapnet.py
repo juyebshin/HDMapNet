@@ -9,7 +9,7 @@ import numpy as np
 from .hdmapnet import HDMapNet
 from .gcn import GCN
 
-def MLP(channels: list, do_bn=True):
+def MLP(channels: list, do_bn=True, norm_layer=nn.BatchNorm1d):
     """ MLP """
     n = len(channels)
     layers = []
@@ -19,7 +19,7 @@ def MLP(channels: list, do_bn=True):
         )
         if i < (n-1):
             if do_bn:
-                layers.append(nn.BatchNorm1d(channels[i]))
+                layers.append(norm_layer(channels[i]))
             layers.append(nn.ReLU())
     
     return nn.Sequential(*layers)
@@ -228,10 +228,10 @@ class MultiHeadedAttention(nn.Module):
         return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1)), attn
 
 class AttentionalPropagation(nn.Module):
-    def __init__(self, feature_dim: int, num_heads: int):
+    def __init__(self, feature_dim: int, num_heads: int, norm_layer=nn.BatchNorm1d):
         super().__init__()
         self.attn = MultiHeadedAttention(num_heads, feature_dim)
-        self.mlp = MLP([feature_dim*2, feature_dim*2, feature_dim])
+        self.mlp = MLP([feature_dim*2, feature_dim*2, feature_dim], norm_layer=norm_layer)
         nn.init.constant_(self.mlp[-1].bias, 0.0)
 
     def forward(self, x, source, mask=None):
@@ -241,10 +241,10 @@ class AttentionalPropagation(nn.Module):
         return self.mlp(torch.cat([x, message], dim=1)), attention # [4, 512, 300] -> [4, 256, 300], [b, 4, N, N]
 
 class AttentionalGNN(nn.Module):
-    def __init__(self, feature_dim: int, layer_names: list):
+    def __init__(self, feature_dim: int, layer_names: list, norm_layer=nn.BatchNorm1d):
         super().__init__()
         self.layers = nn.ModuleList([
-            AttentionalPropagation(feature_dim, 4)
+            AttentionalPropagation(feature_dim, 4, norm_layer)
             for _ in range(len(layer_names))])
         self.names = layer_names
 
@@ -267,10 +267,10 @@ class AttentionalGNN(nn.Module):
 
 class GraphEncoder(nn.Module):
     """ Joint encoding of vertices and distance transform embeddings """
-    def __init__(self, feature_dim, layers: list) -> None:
+    def __init__(self, feature_dim, layers: list, norm_layer=nn.BatchNorm1d) -> None:
         super().__init__()
         # first element of layers should be either 3 (for vertices) or 64 (for dt embeddings)
-        self.encoder = MLP(layers + [feature_dim])
+        self.encoder = MLP(layers + [feature_dim], norm_layer=norm_layer)
         nn.init.constant_(self.encoder[-1].bias, 0.0)
     
     def forward(self, embedding: torch.Tensor):
@@ -281,7 +281,7 @@ class GraphEncoder(nn.Module):
         return self.encoder(input) # [b, 256, N]
 
 class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, refine=False) -> None:
+    def __init__(self, data_conf, norm_layer_dict, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, refine=False) -> None:
         super(VectorMapNet, self).__init__()
 
         self.num_classes = data_conf['num_channels'] # 4
@@ -302,17 +302,17 @@ class VectorMapNet(nn.Module):
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
 
         # Intermediate representations: vertices, distance transform
-        self.bev_backbone = HDMapNet(data_conf, False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
+        self.bev_backbone = HDMapNet(data_conf, norm_layer_dict['2d'], False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
 
         # Positional encoding
         self.pe_fn, self.pe_dim = get_embedder(data_conf['pos_freq'])
         
         # Graph neural network
         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
-        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 128]) # 43 -> 128 -> 256
+        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
-        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 128]) # 192/256 -> 128 -> 256
-        self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'])
+        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
+        self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'], norm_layer_dict['1d'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
         bin_score = nn.Parameter(torch.tensor(1.))

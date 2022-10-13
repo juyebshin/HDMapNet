@@ -72,9 +72,18 @@ def train(args):
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
     device = torch.device(args.device)
+    BatchNorm1d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm1d
+    BatchNorm2d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm2d
+    norm_layer_dict = {'1d': BatchNorm1d, '2d': BatchNorm2d}
+    
+    if args.distributed:
+        num_gpus = args.world_size
+        assert args.bsz % num_gpus == 0, f"Check batch_size (batch_size % num_gpus == 0)"
+        args.lr = args.lr / 8 * args.bsz
+        args.bsz = args.bsz // num_gpus
     
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.distributed)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model = get_model(args.model, data_conf, norm_layer_dict, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.to(device)
     
     model_without_ddp = model
@@ -204,7 +213,7 @@ def train(args):
                     writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
             
             if args.vis_interval > 0:
-                if counter % args.vis_interval == 0:
+                if counter % args.vis_interval == 0 and args.rank == 0:
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
@@ -213,7 +222,7 @@ def train(args):
                 
             counter += 1
 
-        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval)
+        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval, args.rank == 0)
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")
@@ -234,7 +243,7 @@ def train(args):
         if cdist < best_cd:
             best_cd = cdist
             model_name = os.path.join(args.logdir, "model_best.pt")
-            torch.save(model.state_dict(), model_name)
+            torch.save(model.module.state_dict() if args.distributed else model.state_dict(), model_name)
             logger.info(f"{model_name} saved")
         
         model.train()
@@ -270,8 +279,6 @@ if __name__ == '__main__':
     parser.add_argument("--vis_interval", type=int, default=200)
 
     # distributed training config
-    parser.add_argument('--world_size', default=1, type=int,
-                        help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     # finetune config

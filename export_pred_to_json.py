@@ -106,7 +106,7 @@ def main(args):
     # train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
-    model = get_model(args.model, data_conf, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred)
+    model = get_model(args.model, data_conf, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     export_vectormapnet_to_json(model, val_loader, args.angle_class, args)
@@ -155,6 +155,9 @@ if __name__ == '__main__':
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,
                         help="log2 of max freq for positional encoding (2D vertex location)")
+                                                
+    # vector refinement config
+    parser.add_argument("--refine", action='store_true')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total

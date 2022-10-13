@@ -41,7 +41,7 @@ class ViewTransformation(nn.Module):
 
 
 class HDMapNet(nn.Module):
-    def __init__(self, data_conf, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True):
+    def __init__(self, data_conf, norm_layer=nn.BatchNorm2d, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=36, lidar=False, distance_reg=True, vertex_pred=True):
         super(HDMapNet, self).__init__()
         self.camC = 64 # feature channel?
         self.downsample = 16
@@ -52,7 +52,7 @@ class HDMapNet(nn.Module):
         final_H, final_W = nx[1].item(), nx[0].item()
 
         # EfficientNet-B0
-        self.camencode = CamEncode(self.camC, data_conf['backbone'])
+        self.camencode = CamEncode(self.camC, data_conf['backbone'], norm_layer)
         fv_size = (data_conf['image_size'][0]//self.downsample, data_conf['image_size'][1]//self.downsample)
         # fv_size: (8, 22)
         bv_size = (final_H//5, final_W//5)
@@ -69,9 +69,9 @@ class HDMapNet(nn.Module):
         self.lidar = lidar
         if lidar:
             self.pp = PointPillarEncoder(128, data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
-            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
         else:
-            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
 
     def get_Ks_RTs_and_post_RTs(self, intrins, rots, trans, post_rots, post_trans):
         B, N, _, _ = intrins.shape
