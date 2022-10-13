@@ -310,7 +310,7 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false') # store_true
+    parser.add_argument("--distance_reg", action='store_true') # store_true
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config, always true for VectorMapNet
