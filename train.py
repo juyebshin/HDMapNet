@@ -20,6 +20,7 @@ from model import get_model
 from evaluate import onehot_encoding, eval_iou, visualize
 
 import data.utils as utils
+import data.logger
 
 
 def write_log(writer, ious, cdist, title, counter):
@@ -35,15 +36,17 @@ def train(args):
 
     if not os.path.exists(args.logdir):
         os.mkdir(args.logdir)
-    logging.basicConfig(filename=os.path.join(args.logdir, "results.log"),
-                        filemode='w',
-                        format='%(asctime)s: %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.INFO)
-    logging.getLogger('shapely.geos').setLevel(logging.CRITICAL)
+    # logging.basicConfig(filename=os.path.join(args.logdir, "results.log"),
+    #                     filemode='w',
+    #                     format='%(asctime)s: %(message)s',
+    #                     datefmt='%Y-%m-%d %H:%M:%S',
+    #                     level=logging.INFO)
+    # logging.getLogger('shapely.geos').setLevel(logging.CRITICAL)
 
-    logger = logging.getLogger()
-    logger.addHandler(logging.StreamHandler(sys.stdout))
+    # logger = logging.getLogger()
+    # logger.addHandler(logging.StreamHandler(sys.stdout))
+
+    logger = data.logger.setup_logger('vectorized map learning', args.logdir, args.rank, "results.log")
 
     data_conf = {
         'num_channels': NUM_CLASSES + 1, # 4
@@ -76,7 +79,7 @@ def train(args):
     
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
     if args.finetune:
@@ -242,7 +245,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/backbone_test')
+    parser.add_argument("--logdir", type=str, default='./runs/multi_gpu_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
@@ -259,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)
-    parser.add_argument("--bsz", type=int, default=4) # batch-size
+    parser.add_argument("--bsz", type=int, default=12) # batch-size
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
@@ -307,7 +310,7 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_true') # store_true
+    parser.add_argument("--distance_reg", action='store_false') # store_true
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config, always true for VectorMapNet
