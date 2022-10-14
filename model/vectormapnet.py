@@ -312,6 +312,7 @@ class VectorMapNet(nn.Module):
         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256]) # 43 -> 64 -> 128 -> 256 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256]) # 192/256 -> 128 -> 256
+        self.embed_norm = nn.InstanceNorm1d(self.feature_dim*2)
         self.gnn = AttentionalGNN(self.feature_dim*2, data_conf['gnn_layers'])
         self.final_proj = nn.Conv1d(self.feature_dim*2, self.feature_dim*2, kernel_size=1, bias=True)
 
@@ -392,7 +393,7 @@ class VectorMapNet(nn.Module):
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        graph_embedding = torch.cat((self.venc(pos_embedding), self.dtenc(dt_embedding)), 1) # [b, 256, N]
+        graph_embedding = self.embed_norm(torch.cat((self.venc(pos_embedding), self.dtenc(dt_embedding)), 1)) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
