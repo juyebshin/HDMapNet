@@ -46,7 +46,7 @@ def train(args):
     # logger = logging.getLogger()
     # logger.addHandler(logging.StreamHandler(sys.stdout))
 
-    logger = data.logger.setup_logger('vectorized map learning', args.logdir, args.rank, "results.log")
+    logger = data.logger.setup_logger('vectorized map learning', args.logdir, utils.is_main_process(), "results.log")
 
     data_conf = {
         'num_channels': NUM_CLASSES + 1, # 4
@@ -79,7 +79,7 @@ def train(args):
     if args.distributed:
         num_gpus = args.world_size
         assert args.bsz % num_gpus == 0, f"Check batch_size (batch_size % num_gpus == 0)"
-        args.lr = args.lr / 8 * args.bsz
+        # args.lr = args.lr / 8 * args.bsz
         args.bsz = args.bsz // num_gpus
     
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.distributed)
@@ -213,7 +213,7 @@ def train(args):
                     writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
             
             if args.vis_interval > 0:
-                if counter % args.vis_interval == 0 and args.rank == 0:
+                if counter % args.vis_interval == 0 and utils.is_main_process():
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
@@ -222,7 +222,7 @@ def train(args):
                 
             counter += 1
 
-        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval, args.rank == 0)
+        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval, utils.is_main_process())
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")

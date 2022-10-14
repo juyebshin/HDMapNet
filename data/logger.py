@@ -6,12 +6,12 @@ __all__ = ['setup_logger']
 
 
 # reference from: https://github.com/facebookresearch/maskrcnn-benchmark/blob/master/maskrcnn_benchmark/utils/logger.py
-def setup_logger(name, save_dir, distributed_rank, filename="results.log", mode='w'):
+def setup_logger(name, save_dir, is_master, filename="results.log", mode='w'):
     logging.getLogger('shapely.geos').setLevel(logging.CRITICAL)
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     # don't log results for the non-master process
-    if distributed_rank > 0:
+    if is_master:
         return logger
     ch = logging.StreamHandler(stream=sys.stdout)
     ch.setLevel(logging.INFO)
