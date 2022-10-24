@@ -11,7 +11,7 @@ def setup_logger(name, save_dir, is_master, filename="results.log", mode='w'):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     # don't log results for the non-master process
-    if is_master:
+    if not is_master:
         return logger
     ch = logging.StreamHandler(stream=sys.stdout)
     ch.setLevel(logging.INFO)

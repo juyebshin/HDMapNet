@@ -243,7 +243,7 @@ class VectorMapNetDataset(HDMapNetDataset):
         semantic_masks, instance_masks, distance_masks, vertex_masks, vectors = self.get_vector_map(rec)
         return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, vectors
     
-def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed):
+def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed=False):
     train_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=True)
     val_dataset = VectorMapNetDataset(version, dataroot, data_conf, is_train=False)
 
@@ -252,7 +252,7 @@ def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed):
         val_sampler = DistributedSampler(val_dataset, shuffle=False)
     else:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
-        val_sampler = torch.utils.data.SequentialSampler(val_sampler)
+        val_sampler = torch.utils.data.SequentialSampler(val_dataset)
     
     train_batch_sampler = torch.utils.data.BatchSampler(train_sampler, bsz, drop_last=True)
 

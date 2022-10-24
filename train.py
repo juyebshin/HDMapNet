@@ -13,7 +13,7 @@ from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWit
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
-from data.utils import label_onehot_decoding
+from data.utils import is_main_process, label_onehot_decoding
 from evaluation.iou import get_batch_iou, get_batch_cd
 from evaluation.angle_diff import calc_angle_diff
 from model import get_model
@@ -34,7 +34,7 @@ def write_log(writer, ious, cdist, title, counter):
 def train(args):
     utils.init_distributed_mode(args)
 
-    if not os.path.exists(args.logdir):
+    if not os.path.exists(args.logdir) and utils.is_main_process():
         os.mkdir(args.logdir)
     # logging.basicConfig(filename=os.path.join(args.logdir, "results.log"),
     #                     filemode='w',
@@ -243,7 +243,8 @@ def train(args):
         if cdist < best_cd:
             best_cd = cdist
             model_name = os.path.join(args.logdir, "model_best.pt")
-            torch.save(model.module.state_dict() if args.distributed else model.state_dict(), model_name)
+            if utils.is_main_process():
+                torch.save(model.module.state_dict() if args.distributed else model.state_dict(), model_name)
             logger.info(f"{model_name} saved")
         
         model.train()
