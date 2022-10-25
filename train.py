@@ -158,9 +158,7 @@ def train(args):
             if args.distance_reg:
                 dt_loss = dt_loss_fn(distance, distance_gt)
             else:
-                dt_loss = 0
-                distance = F.interpolate(distance, scale_factor=2, mode='bilinear', align_corners=True) # [b, 256, 200, 400]
-                distance = torch.sum(distance, dim=1, keepdim=True) # b, 1, 200, 400
+                dt_loss = loss_fn(distance, semantic_gt[:, 1:])
                 # normalize 0~1?
             
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
@@ -216,9 +214,11 @@ def train(args):
                 if counter % args.vis_interval == 0 and utils.is_main_process():
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
+                    else:
+                        distance = distance.sigmoid()
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
+                    visualize(writer, 'train', imgs, distance_gt if args.distance_reg else semantic_gt[:, 1:], vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
                 
             counter += 1
 
@@ -255,7 +255,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/multi_gpu_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/binary_logit_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
@@ -263,7 +263,7 @@ if __name__ == '__main__':
 
     # model config
     parser.add_argument("--model", type=str, default='VectorMapNet_cam')
-    parser.add_argument("--backbone", type=str, default='efficientnet-b4',
+    parser.add_argument("--backbone", type=str, default='efficientnet-b0',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config

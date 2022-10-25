@@ -208,6 +208,19 @@ class BevEncode(nn.Module):
                 # b, 3, 200, 400
             )
             self.up3 = UpDT(256 + outC-1, outC, scale_factor=2, norm_layer=norm_layer)
+        else:
+            self.up_bin = nn.Sequential( # distance transform prediction
+                # b, 256, 100, 200
+                nn.Upsample(scale_factor=2, mode='bilinear',
+                            align_corners=True),
+                # b, 256, 200, 400
+                nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
+                # b, 128, 200, 400
+                norm_layer(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # outC = 3 no background
+                # b, 3, 200, 400
+            )
 
         self.vertex_pred = vertex_pred
         if vertex_pred:
@@ -278,7 +291,7 @@ class BevEncode(nn.Module):
             else:
                 x_seg = None
         else:
-            x_dt = x
+            x_dt = self.up_bin(x) # b, 4, 200, 400 # semantic segmentation prediction
             if self.segmentation:
                 x_seg = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
             else:

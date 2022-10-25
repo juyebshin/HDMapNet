@@ -48,12 +48,12 @@ def remove_borders(vertices, scores, border: int, height: int, width: int):
         mask = mask_h & mask_w
         return vertices[mask], scores[mask]
 
-def sample_dt(vertices, distance: Tensor, threshold: int, s: int = 8):
+def sample_dt(vertices, distance: Tensor, s: int = 8):
     """ Extract distance transform patches around vertices """
     # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
     # distance: (b, 3, 200, 400) tensor
     # embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
-    embedding = distance / threshold # 0 ~ 10 -> 0 ~ 1 normalize
+    embedding = distance # 0 ~ 10 -> 0 ~ 1 normalize
     b, c, h, w = embedding.shape # b, 3, 200, 400
     hc, wc = int(h/s), int(w/s) # 25, 50
     embedding = embedding.reshape(b, c, hc, s, wc, s).permute(0, 1, 2, 4, 3, 5) # b, c, 25, 8, 50, 8 -> b, c, 25, 50, 8, 8
@@ -310,7 +310,7 @@ class VectorMapNet(nn.Module):
         # Graph neural network
         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
-        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
+        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size # if distance_reg else 256 # 192 or 256
         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'], norm_layer_dict['1d'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
@@ -366,11 +366,10 @@ class VectorMapNet(nn.Module):
 
         # Extract distance transform
         if self.distance_reg:
-            dt_embedding = sample_dt(vertices_cell, distance, self.dist_threshold, self.cell_size) # list of [N, 193] tensor
+            dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
         else:
-            # distance: feature [b, 256, 100, 200]
-            distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
-            dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
+            # distance: segmentation [b, 3, 200, 400]
+            dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
