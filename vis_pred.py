@@ -73,6 +73,14 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             distance_gt = (distance_gt - vmin) / (vmax - vmin)
 
             for si in range(imgs.shape[0]): # iterate over batch
+                idx = batchi*val_loader.batch_size + si
+                rec = val_loader.dataset.samples[idx]
+                scene_name = val_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
+                lidar_top_path = val_loader.dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+                base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+                base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
+
+                print(f'batch index {batchi:06}_{si:03}')
                 # semantic: b, 4, 200, 400
                 # semantic_pred_onehot = np.argmax(semantic[si], axis=0)
                 # semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
@@ -134,32 +142,32 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
 
                 if vertex_pred:
                     # heatmap
-                    heatmap = vertex[si, :-1, :, :] # 64, 25, 50
-                    Hc, Wc = heatmap.shape[1:] # 25, 50
-                    heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
-                    heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
-                    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-                    heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
-                    heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
-                    heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    impath = os.path.join(logdir, 'heatmap')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    print('saving', imname)
-                    Image.fromarray(heatmap_color.astype('uint8')).save(imname)
-                    # vertex
-                    # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
-                    # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
-                    # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
-                    heatmap[heatmap > 0] = 1
-                    vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    impath = os.path.join(logdir, 'vertex')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    print('saving', imname)
-                    Image.fromarray(vertex_color.astype('uint8')).save(imname)
+                    # heatmap = vertex[si, :-1, :, :] # 64, 25, 50
+                    # Hc, Wc = heatmap.shape[1:] # 25, 50
+                    # heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
+                    # heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    # heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+                    # heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
+                    # heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
+                    # heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    # impath = os.path.join(logdir, 'heatmap')
+                    # if not os.path.exists(impath):
+                    #     os.mkdir(impath)
+                    # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    # print('saving', imname)
+                    # Image.fromarray(heatmap_color.astype('uint8')).save(imname)
+                    # # vertex
+                    # # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
+                    # # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
+                    # # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
+                    # heatmap[heatmap > 0] = 1
+                    # vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    # impath = os.path.join(logdir, 'vertex')
+                    # if not os.path.exists(impath):
+                    #     os.mkdir(impath)
+                    # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    # print('saving', imname)
+                    # Image.fromarray(vertex_color.astype('uint8')).save(imname)
                     
                     # nodust_gt = vertex_gt[si, :-1, :, :] # 64, 25, 50
                     # Hc, Wc = nodust_gt.shape[1:] # 25, 50
@@ -205,6 +213,25 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     position_valid = position_valid * dx + bx # [-30, -15, 30, 15]
                     position_valid = position_valid[mask == 1] # [M, 3]
 
+                    # vector segmentation prediction
+                    semantic_onehot = semantic[si].exp().detach().cpu().float().numpy() # [3, N]
+                    semantic_onehot = semantic_onehot.argmax(0)[mask == 1] # [M]
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=1.0, c=[colors_plt[c] for c in semantic_onehot])
+                    
+                    impath = os.path.join(logdir, 'segmentation')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'{base_name}.png')
+                    print('saving', imname)
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                    plt.close()
+
                     # # matches
                     # mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
                     # match = matches[si] # [N, N+1]
@@ -232,29 +259,29 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # plt.savefig(imname, bbox_inches='tight', dpi=400)
                     # plt.close()
 
-                    match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
+                    # match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
                     
-                    impath = os.path.join(logdir, 'vector_top2')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                    print('saving', imname)
+                    # impath = os.path.join(logdir, 'vector_top2')
+                    # if not os.path.exists(impath):
+                    #     os.mkdir(impath)
+                    # imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    # print('saving', imname)
 
-                    fig = plt.figure(figsize=(4, 2))
-                    plt.xlim(-30, 30)
-                    plt.ylim(-15, 15)
-                    plt.axis('off')
-                    plt.grid(False)
+                    # fig = plt.figure(figsize=(4, 2))
+                    # plt.xlim(-30, 30)
+                    # plt.ylim(-15, 15)
+                    # plt.axis('off')
+                    # plt.grid(False)
 
-                    # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-                    for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
-                        for s, n in zip(score, next):
-                            if n < len(position_valid):
-                                plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
+                    # # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+                    # for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
+                    #     for s, n in zip(score, next):
+                    #         if n < len(position_valid):
+                    #             plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
                     
-                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                    plt.savefig(imname, bbox_inches='tight', dpi=400)
-                    plt.close()
+                    # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    # plt.savefig(imname, bbox_inches='tight', dpi=400)
+                    # plt.close()
 
                     # attention = attentions[si, -1] # [4, 300, 300]
 
@@ -613,7 +640,7 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    # vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     # if args.instance_seg and args.direction_pred:
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
     if args.model == 'VectorMapNet_cam':
