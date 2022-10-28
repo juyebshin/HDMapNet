@@ -27,6 +27,8 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
                 vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, 
                 dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, 
                 masks: torch.Tensor, attentions: torch.Tensor, xbound: list, ybound: list, step: int):
+    if writer is None:
+        return
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
     # heatmap: b, 65, 25, 50 tensor

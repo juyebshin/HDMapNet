@@ -104,7 +104,7 @@ def train(args):
 
     opt = torch.optim.Adam(model_without_ddp.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = StepLR(opt, 10, 0.1)
-    writer = SummaryWriter(logdir=args.logdir)
+    writer = SummaryWriter(logdir=args.logdir) if utils.is_main_process() else None
 
     loss_fn = SimpleLoss(args.pos_weight).cuda()
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
@@ -194,21 +194,22 @@ def train(args):
                             f"Seg loss: {seg_loss.item():>7.4f}    "
                             f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
 
-                write_log(writer, iou, total_cdist, 'train', counter)
-                writer.add_scalar('train/step_time', t1 - t0, counter)
-                writer.add_scalar('train/seg_loss', seg_loss, counter)
-                writer.add_scalar('train/var_loss', var_loss, counter)
-                writer.add_scalar('train/dist_loss', dist_loss, counter)
-                writer.add_scalar('train/reg_loss', reg_loss, counter)
-                writer.add_scalar('train/direction_loss', direction_loss, counter)
-                writer.add_scalar('train/final_loss', final_loss, counter)
-                writer.add_scalar('train/angle_diff', angle_diff, counter)
-                writer.add_scalar('train/dt_loss', dt_loss, counter)
-                writer.add_scalar('train/vt_loss', vt_loss, counter)
-                writer.add_scalar('train/match_loss', match_loss, counter)
-                writer.add_scalar('train/cdist_loss', cdist_loss, counter)
-                for bi, mask in enumerate(masks):
-                    writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
+                if writer is not None:
+                    write_log(writer, iou, total_cdist, 'train', counter)
+                    writer.add_scalar('train/step_time', t1 - t0, counter)
+                    writer.add_scalar('train/seg_loss', seg_loss, counter)
+                    writer.add_scalar('train/var_loss', var_loss, counter)
+                    writer.add_scalar('train/dist_loss', dist_loss, counter)
+                    writer.add_scalar('train/reg_loss', reg_loss, counter)
+                    writer.add_scalar('train/direction_loss', direction_loss, counter)
+                    writer.add_scalar('train/final_loss', final_loss, counter)
+                    writer.add_scalar('train/angle_diff', angle_diff, counter)
+                    writer.add_scalar('train/dt_loss', dt_loss, counter)
+                    writer.add_scalar('train/vt_loss', vt_loss, counter)
+                    writer.add_scalar('train/match_loss', match_loss, counter)
+                    writer.add_scalar('train/cdist_loss', cdist_loss, counter)
+                    for bi, mask in enumerate(masks):
+                        writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0 and utils.is_main_process():
@@ -227,7 +228,7 @@ def train(args):
                     # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")
 
-        write_log(writer, iou, cdist, 'eval', epoch)
+        if writer is not None: write_log(writer, iou, cdist, 'eval', epoch)
         # do not save this to save memory
         # model_name = os.path.join(args.logdir, f"model{epoch}.pt")
         # torch.save(model.state_dict(), model_name)
