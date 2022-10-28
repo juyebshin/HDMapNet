@@ -158,7 +158,8 @@ def train(args):
             if args.distance_reg:
                 dt_loss = dt_loss_fn(distance, distance_gt)
             else:
-                dt_loss = loss_fn(distance, semantic_gt[:, 1:])
+                # dt_loss = loss_fn(distance, semantic_gt[:, 1:])
+                dt_loss = 0
                 # normalize 0~1?
             
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
@@ -215,11 +216,9 @@ def train(args):
                 if counter % args.vis_interval == 0 and utils.is_main_process():
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
-                    else:
-                        distance = distance.sigmoid()
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt if args.distance_reg else semantic_gt[:, 1:], vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
                 
             counter += 1
 

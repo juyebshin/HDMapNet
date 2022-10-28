@@ -311,7 +311,8 @@ class VectorMapNet(nn.Module):
         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size # if distance_reg else 256 # 192 or 256
-        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
+        if distance_reg:
+            self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
         self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'], norm_layer_dict['1d'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
@@ -340,8 +341,8 @@ class VectorMapNet(nn.Module):
         scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
         scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # 4, 200, 400
-        score_shape = scores_max.shape # 4, 200, 400
+        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
+        score_shape = scores_max.shape # b, 200, 400
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
         # scores[scores < self.vertex_threshold] = 0.0
@@ -369,6 +370,7 @@ class VectorMapNet(nn.Module):
             dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
         else:
             # distance: segmentation [b, 3, 200, 400]
+            distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
             dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
 
         if self.max_vertices >= 0:
@@ -391,7 +393,7 @@ class VectorMapNet(nn.Module):
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # [b, 256, N]
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
