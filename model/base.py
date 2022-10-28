@@ -180,6 +180,8 @@ class BevEncode(nn.Module):
         self.layer2 = trunk.layer2
         self.layer3 = trunk.layer3
 
+        self.num_class = outC-1 # 3
+
         self.up1 = Up(64 + 256, 256, scale_factor=4, norm_layer=norm_layer)
 
         self.segmentation = segmentation
@@ -278,7 +280,9 @@ class BevEncode(nn.Module):
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
 
         if self.vertex_pred:
-            x_vertex = self.vertex_head(x) # b, 65, 25, 50
+            B, C, H, W = x.shape # b, 256, 100, 200
+            x_aug = x.unsqueeze(1).expand(B, self.num_class, C, H, W) # b, 3, 256, 100, 200
+            x_vertex = self.vertex_head(x_aug.reshape(-1, C, H, W)) # b*3, 65, 25, 50
         else:
             x_vertex = None
 

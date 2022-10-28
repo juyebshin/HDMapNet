@@ -36,6 +36,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         'angle_class': angle_class,
         'dist_threshold': dist_threshold,
         'cell_size': cell_size,
+        'sample_dist': args.sample_dist, # 1.5
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
@@ -48,7 +49,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         [255, 0, 0] # contour
         ])
 
-    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=True)
+    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     gt_path = os.path.join(dataroot, 'samples', 'semanticGT')
 
     if not os.path.exists(gt_path):
@@ -99,16 +100,17 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         distance_color_mask = cmap(distance_mask)[..., :3] * 255 # 200, 400, 3
         Image.fromarray(distance_color_mask.astype('uint8')).save(distance_path)
 
-        vertex_mask = vertex_mask.numpy().astype('uint8') * 255 # 65, 25, 50
-        nodust = vertex_mask[:-1, :, :] # remove dustbin, 64, 25, 50
-        Hc, Wc = vertex_mask.shape[1:] # 25, 50
-        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-        heatmap = np.reshape(nodust, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
-        heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-        heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
-        vertex_path = os.path.join(base_path, "VERTEX.png")
-        vertex_color_mask = cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-        Image.fromarray(vertex_color_mask.astype('uint8')).save(vertex_path)
+        vertex_mask = vertex_mask.numpy().astype('uint8') * 255 # 3, 65, 25, 50
+        nodust = vertex_mask[:, :-1, :, :] # remove dustbin, 3, 64, 25, 50
+        C, _, Hc, Wc = vertex_mask.shape # 3, 25, 50
+        nodust = nodust.transpose(0, 2, 3, 1) # 25, 50, 64
+        heatmap = np.reshape(nodust, [C, Hc, Wc, cell_size, cell_size]) # C, 25, 50, 8, 8
+        heatmap = np.transpose(heatmap, [0, 1, 3, 2, 4]) # 3, 25, 8, 50, 8
+        heatmap = np.reshape(heatmap, [C, Hc*cell_size, Wc*cell_size]) # 3, 200, 400
+        for c, vmap in enumerate(heatmap):
+            vertex_path = os.path.join(base_path, f"VERTEX_{c}.png")
+            vertex_color_mask = cmap(vmap)[..., :3] * 255 # 200, 400, 3
+            Image.fromarray(vertex_color_mask.astype('uint8')).save(vertex_path)
 
         fig = plt.figure(figsize=(4, 2))
         ax = fig.add_axes([0, 0, 1, 1])
@@ -146,7 +148,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('dataroot', nargs='?', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
@@ -154,6 +156,7 @@ if __name__ == '__main__':
     parser.add_argument("--angle_class", type=int, default=36)
     parser.add_argument("--dist_threshold", type=float, default=10.0)
     parser.add_argument("--cell_size", type=int, default=8)
+    parser.add_argument("--sample_dist", type=float, default=1.5) # 1.5
     args = parser.parse_args()
 
     vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold, args.cell_size)

@@ -134,9 +134,11 @@ def train(args):
             semantic_gt = semantic_gt.cuda().float()
             instance_gt = instance_gt.cuda()
             distance_gt = distance_gt.cuda()
-            vertex_gt = vertex_gt.cuda().float()
+            vertex_gt = vertex_gt.cuda().float() # [b, 3, 65, 25, 50]
 
-            vt_loss = vt_loss_fn(vertex, vertex_gt)
+            _, C, D, H, W = vertex_gt.shape
+            vertex_gt_batch = vertex_gt.reshape(-1, D, H, W)
+            vt_loss = vt_loss_fn(vertex, vertex_gt_batch)
 
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
@@ -181,7 +183,7 @@ def train(args):
 
             if counter % 10 == 0:
                 heatmap = vertex.softmax(1)
-                intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
+                intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt_batch)
                 iou = intersects / (union + 1e-7)
                 cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15])
                 total_cdist = float((cdist_p + cdist_l)*0.5)
@@ -255,7 +257,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/binary_logit_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/class_wise_vertex_debug')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
