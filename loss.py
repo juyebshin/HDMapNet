@@ -121,7 +121,7 @@ class GraphLoss(nn.Module):
             pts_type_list = []
             for ins, vector in enumerate(vector_gt): # dict
                 pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-                pts = pts[:pts_num] # [p, 2] array
+                pts = pts[:pts_num] # [p, 2] array in meters
                 # normalize coordinates 0~1
                 [(pts_list.append((pt + self.bound) / (2*self.bound)), pts_ins_order.append(i)) for i, pt in enumerate(pts)]
                 # [pts_list.append(pt) for pt in pts]

@@ -227,7 +227,7 @@ class VectorMapNetDataset(HDMapNetDataset):
 
     def get_vector_map(self, rec):
         vectors = self.get_vectors(rec)
-        instance_masks, _, _, distance_masks, vertex_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class)
+        instance_masks, _, _, distance_masks, vertex_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class, self.cell_size)
         semantic_masks = instance_masks != 0
         semantic_masks = torch.cat([(~torch.any(semantic_masks, axis=0)).unsqueeze(0), semantic_masks])
         instance_masks = instance_masks.sum(0)

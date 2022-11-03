@@ -243,15 +243,17 @@ class PlaneEstimationModule(nn.Module):
 
 class IPM(nn.Module):
     def __init__(self, xbound, ybound, N, C, z_roll_pitch=False, visual=False, extrinsic=False, cuda=True):
-        # xbound: [-60, 60, 0.6] ybound: [-30, 30, 0.6]
+        # 0.15: xbound: [-60, 60, 0.6] ybound: [-30, 30, 0.6]
+        # 0.3: xbound: [-30, 30, 0.6] ybound: [-15, 15, 0.6]
+        # 0.6: xbound: [-15, 15, 0.6] ybound: [-7.5, 7.5, 0.6]
         super(IPM, self).__init__()
         self.visual = visual
         self.z_roll_pitch = z_roll_pitch
         self.xbound = xbound
         self.ybound = ybound
         self.extrinsic = extrinsic
-        self.w = int((xbound[1] - xbound[0]) / xbound[2]) # 200
-        self.h = int((ybound[1] - ybound[0]) / ybound[2]) # 100
+        self.w = int((xbound[1] - xbound[0]) / xbound[2]) # 0.15: 200, 0.3: 100, 0.6: 50
+        self.h = int((ybound[1] - ybound[0]) / ybound[2]) # 0.15: 100, 0.3: 50, 0.6: 25
 
         if z_roll_pitch:
             self.plane_esti = PlaneEstimationModule(N, C)

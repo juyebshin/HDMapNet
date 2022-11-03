@@ -47,7 +47,7 @@ class HDMapNet(nn.Module):
         self.downsample = 16
 
         dx, bx, nx = gen_dx_bx(data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
-        # nx = tensor([400, 200,   1])
+        # nx = 0.15: tensor([400, 200,   1]), 0.3: tensor([200, 100,   1]), 0.6: tensor([100, 50,   1]) long
         # final_H: 200, final_W: 400
         final_H, final_W = nx[1].item(), nx[0].item()
 
@@ -56,12 +56,12 @@ class HDMapNet(nn.Module):
         fv_size = (data_conf['image_size'][0]//self.downsample, data_conf['image_size'][1]//self.downsample)
         # fv_size: (8, 22)
         bv_size = (final_H//5, final_W//5)
-        # bv_size: (40, 80)
+        # bv_size: 0.15: (40, 80), 0.3: (20, 40), 0.6: (10, 20)
         self.view_fusion = ViewTransformation(fv_size=fv_size, bv_size=bv_size)
 
-        res_x = bv_size[1] * 3 // 4 # 80*3 // 4 = 60
-        ipm_xbound = [-res_x, res_x, 4*res_x/final_W] # [-60, 60, 0.6]
-        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H] # [-30, 30, 0.6]
+        res_x = bv_size[1] * 3 // 4 # 0.15: 80*3 // 4 = 60, 0.3: 30, 0.6: 15
+        ipm_xbound = [-res_x, res_x, 4*res_x/final_W] # 0.15: [-60, 60, 0.6], 0.3: [-30, 30, 0.6], 0.6: [-15, 15, 0.6]
+        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H] # 0.15: [-30, 30, 0.6], 0.3: [-15, 15, 0.6], 0.6: [-7.5, 7.5, 0.6]
         self.ipm = IPM(ipm_xbound, ipm_ybound, N=6, C=self.camC, extrinsic=True)
         self.up_sampler = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         # self.up_sampler = nn.Upsample(scale_factor=5, mode='bilinear', align_corners=True)
@@ -69,9 +69,9 @@ class HDMapNet(nn.Module):
         self.lidar = lidar
         if lidar:
             self.pp = PointPillarEncoder(128, data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
-            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=data_conf['cell_size'])
         else:
-            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred)
+            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=direction_dim+1, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=data_conf['cell_size'])
 
     def get_Ks_RTs_and_post_RTs(self, intrins, rots, trans, post_rots, post_trans):
         B, N, _, _ = intrins.shape

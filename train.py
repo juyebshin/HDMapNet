@@ -183,7 +183,7 @@ def train(args):
                 heatmap = vertex.softmax(1)
                 intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
                 iou = intersects / (union + 1e-7)
-                cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, [-30.0, 30.0, 0.15], [-15.0, 15.0, 0.15])
+                cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
                 total_cdist = float((cdist_p + cdist_l)*0.5)
                 logger.info(f"TRAIN[{epoch:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
@@ -218,11 +218,11 @@ def train(args):
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, args.xbound, args.ybound, counter)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, counter, args)
                 
             counter += 1
 
-        iou, cdist = eval_iou(model, val_loader, writer, epoch, args.vis_interval, utils.is_main_process())
+        iou, cdist = eval_iou(model, val_loader, args, writer, epoch, args.vis_interval, utils.is_main_process())
         logger.info(f"EVAL[{epoch:>2d}]:    "
                     # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")
@@ -255,7 +255,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/binary_logit_debug')
+    parser.add_argument("--logdir", type=str, default='./runs/resolution_test')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')

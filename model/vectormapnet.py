@@ -432,7 +432,7 @@ class VectorMapNet(nn.Module):
         # Refinement offset in pixel coordinate
         if self.refine:
             _, h, w = score_shape
-            offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2]
+            offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
             vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
