@@ -168,7 +168,7 @@ class CamEncode(nn.Module):
 
 
 class BevEncode(nn.Module):
-    def __init__(self, inC, outC, norm_layer=nn.BatchNorm2d, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True):
+    def __init__(self, inC, outC, norm_layer=nn.BatchNorm2d, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True, cell_size=8):
         super(BevEncode, self).__init__()
         trunk = resnet18(pretrained=False, zero_init_residual=True)
         self.conv1 = nn.Conv2d(inC, 64, kernel_size=7, stride=2, padding=3,
@@ -223,6 +223,7 @@ class BevEncode(nn.Module):
             )
 
         self.vertex_pred = vertex_pred
+        self.cell_size = cell_size
         if vertex_pred:
             self.vertex_head = nn.Sequential(
                 # b, 256, 100, 200
@@ -238,8 +239,8 @@ class BevEncode(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
                 # b, 128, 25, 50
-                nn.Conv2d(128, 65, kernel_size=1, padding=0), # 65: cell_size*cell_size + 1 (dustbin)
-                # b, 65, 25, 50
+                nn.Conv2d(128, cell_size*cell_size+1, kernel_size=1, padding=0), # 65: cell_size*cell_size + 1 (dustbin)
+                # b, cs^2+1, 25, 50
             )
 
         self.instance_seg = instance_seg
