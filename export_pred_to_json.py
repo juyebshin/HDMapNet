@@ -64,7 +64,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
     model.eval()
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                        post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                        lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 

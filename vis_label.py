@@ -21,7 +21,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
 
     color_map = np.random.randint(0, 256, (256, 3))
     color_map[0] = np.array([0, 0, 0])
-    colors_plt = ['r', 'b', 'g']
+    colors_plt = ['tab:red', 'tab:blue', 'tab:green']
 
     dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     gt_path = os.path.join(dataroot, 'samples', 'GT')
@@ -69,18 +69,18 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
         plt.axis('off')
-        plt.xticks(major_xticks, fontsize=2)
-        plt.yticks(major_yticks, fontsize=2)
-        plt.grid(True)
+        # plt.xticks(major_xticks, fontsize=2)
+        # plt.yticks(major_yticks, fontsize=2)
+        # plt.grid(True)
         
         for vector in vectors:
             pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
             pts = pts[:pts_num]
             x = np.array([pt[0] for pt in pts])
             y = np.array([pt[1] for pt in pts])
-            plt.scatter(x, y, s=0.1, c=colors_plt[line_type])
+            plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
 
-        plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+        # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'VERTEX.png')
         plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
-    parser.add_argument("--sample_dist", type=float, default=1.5)
+    parser.add_argument("--sample_dist", type=float, default=3.0)
     args = parser.parse_args()
 
     vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.sample_dist)

@@ -127,7 +127,7 @@ def train(args):
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -193,7 +193,8 @@ def train(args):
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
                             f"Seg loss: {seg_loss.item():>7.4f}    "
-                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
+                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}    ")
+                print(f"rank: {args.rank}, Num vectors: {[torch.count_nonzero(mask).item() for mask in masks]}")
 
                 if writer is not None:
                     write_log(writer, iou, total_cdist, 'train', counter)
@@ -218,7 +219,7 @@ def train(args):
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, counter, args)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
                 
             counter += 1
 
@@ -255,7 +256,7 @@ def train(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
-    parser.add_argument("--logdir", type=str, default='./runs/resolution_test')
+    parser.add_argument("--logdir", type=str, default='./runs/gnn_layer_test')
 
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
@@ -327,7 +328,7 @@ if __name__ == '__main__':
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,
-                        help="log2 of max freq for positional encoding (2D vertex location)")
+                        help="log2 of max freq for positional encoding (2D vertex location), -1: no positional embedding")
 
     # semantic segmentation config
     parser.add_argument("--segmentation", action='store_true')
