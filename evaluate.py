@@ -26,7 +26,7 @@ def onehot_encoding(logits, dim=1):
 def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, 
                 vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, 
                 dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, 
-                masks: torch.Tensor, attentions: torch.Tensor, step: int, args):
+                masks: torch.Tensor, step: int, args):
     if writer is None:
         return
     # imgs: b, 6, 3, 128, 352
@@ -93,7 +93,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         matches = matches[0].detach().cpu().float().numpy() # [N+1, N+1]
         positions = positions[0].detach().cpu().float().numpy() # [N, 3]
         masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
-        attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
+        # attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
@@ -140,21 +140,21 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.close()
 
         # Attention
-        fig = plt.figure(figsize=(4, 2))
-        plt.xlim(args.xbound[0], args.xbound[1])
-        plt.ylim(args.ybound[0], args.ybound[1])
-        plt.axis('off')
-        # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-        for attention in attentions: # [N, N] numpy
-            attention = attention[masks == 1][:, masks == 1] # [M, M]
-            if positions_valid.shape[0] > 0:
-                values, indices = attention.max(-1), attention.argmax(-1) # [M]
-                plt.quiver(positions_valid[:, 0], positions_valid[:, 1], positions_valid[indices, 0] - positions_valid[:, 0], positions_valid[indices, 1] - positions_valid[:, 1],
-                           values, cmap='jet', scale_units='xy', angles='xy', scale=1)
-            break # only for head 0
-        # plt.colorbar()
-        writer.add_figure(f'{title}/match_attention', fig, step)
-        plt.close()
+        # fig = plt.figure(figsize=(4, 2))
+        # plt.xlim(args.xbound[0], args.xbound[1])
+        # plt.ylim(args.ybound[0], args.ybound[1])
+        # plt.axis('off')
+        # # plt.scatter(positions_valid[:, 0], positions_valid[:, 1], s=0.5, c=positions_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
+        # for attention in attentions: # [N, N] numpy
+        #     attention = attention[masks == 1][:, masks == 1] # [M, M]
+        #     if positions_valid.shape[0] > 0:
+        #         values, indices = attention.max(-1), attention.argmax(-1) # [M]
+        #         plt.quiver(positions_valid[:, 0], positions_valid[:, 1], positions_valid[indices, 0] - positions_valid[:, 0], positions_valid[indices, 1] - positions_valid[:, 1],
+        #                    values, cmap='jet', scale_units='xy', angles='xy', scale=1)
+        #     break # only for head 0
+        # # plt.colorbar()
+        # writer.add_figure(f'{title}/match_attention', fig, step)
+        # plt.close()
 
         # Match prediction
         fig = plt.figure()
@@ -244,7 +244,7 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
     with torch.no_grad():
         for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -268,7 +268,7 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, step, args)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, step, args)
             
             counter += 1
 
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_vectors", type=int, default=300) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.2)
 

@@ -60,7 +60,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             car_trans = car_trans.unsqueeze(0) # [1, 3]
             yaw_pitch_roll = yaw_pitch_roll.unsqueeze(0) # [1, 3]
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
         print("Running test...")
@@ -85,7 +85,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             yaw_pitch_roll = yaw_pitch_roll.unsqueeze(0) # [1, 3]
 
             start.record()
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             mid.record()
@@ -106,7 +106,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.jpg')
-                print('saving', imname)
+                # print('saving', imname)
 
                 fig = plt.figure(figsize=(8, 3))
                 for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[0], intrins[0], rots[0], trans[0], CAMS)):
@@ -145,7 +145,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.png')
-                print('saving', imname)
+                # print('saving', imname)
 
                 fig = plt.figure(figsize=(4, 2))
                 plt.xlim(-30, 30)
@@ -169,7 +169,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.png')
-                print('saving', imname)
+                # print('saving', imname)
 
                 fig = plt.figure(figsize=(4, 2))
                 plt.xlim(-30, 30)
@@ -214,8 +214,9 @@ def main(args):
 
     dataset = VectorMapNetDataset(version=args.version, dataroot=args.dataroot, data_conf=data_conf, is_train=False)
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
-    model = get_model(args.model, data_conf, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
-    model.load_state_dict(torch.load(args.modelf), strict=False)
+    norm_layer_dict = {'1d': torch.nn.BatchNorm1d, '2d': torch.nn.BatchNorm2d}
+    model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
 
     test(dataset, model, args.logdir, data_conf, args.vis)
@@ -271,7 +272,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--gnn_layers", nargs='?', type=str, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 

@@ -127,7 +127,7 @@ def train(args):
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -218,7 +218,7 @@ def train(args):
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, attentions, counter, args)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
                 
             counter += 1
 
@@ -339,7 +339,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.015)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 

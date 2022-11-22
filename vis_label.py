@@ -21,7 +21,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
 
     color_map = np.random.randint(0, 256, (256, 3))
     color_map[0] = np.array([0, 0, 0])
-    colors_plt = ['r', 'b', 'g']
+    colors_plt = ['tab:red', 'tab:blue', 'tab:green']
 
     dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     gt_path = os.path.join(dataroot, 'samples', 'GT')
@@ -52,8 +52,9 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
             pts = pts[:pts_num]
             x = np.array([pt[0] for pt in pts])
             y = np.array([pt[1] for pt in pts])
-            plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-            # plt.scatter(x, y, s=0.1, c=colors_plt[line_type])
+            # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+            plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
+            plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
             num_vectors += pts_num
         num_vectors_list.append([base_path, num_vectors])
 

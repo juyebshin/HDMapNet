@@ -68,7 +68,7 @@ def sample_feat(vertices, feature: Tensor):
     # feature: (b, 256, 25, 50) tensor
     b, c, h, w = feature.shape # b, 256, 25, 50
     embedding = feature.permute(0, 2, 3, 1) # [b, 25, 50, 256]
-    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 256] tensor
     return embedding
 
 def normalize_vertices(vertices: Tensor, image_shape):
@@ -93,9 +93,9 @@ def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int)
     embedding_dim = embeddings.shape[1]
     if k >= n_vertices:
         pad_size = k - n_vertices # k - N
-        pad_v = torch.ones([pad_size, 2], device=vertices.device)
-        pad_s = torch.ones([pad_size], device=scores.device)
-        pad_dt = torch.ones([pad_size, embedding_dim], device=embeddings.device)
+        pad_v = torch.ones([pad_size, 2], device=vertices.device, requires_grad=False)
+        pad_s = torch.ones([pad_size], device=scores.device, requires_grad=False)
+        pad_dt = torch.ones([pad_size, embedding_dim], device=embeddings.device, requires_grad=False)
         vertices, scores, embeddings = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0), torch.cat([embeddings, pad_dt], dim=0)
         mask = torch.zeros([k], dtype=torch.uint8, device=vertices.device)
         mask[:n_vertices] = 1
@@ -224,8 +224,8 @@ class MultiHeadedAttention(nn.Module):
         query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
                              for l, x in zip(self.proj, (query, key, value))]
         # q, k, v: [b, dim, head, N]
-        x, attn = attention(query, key, value, mask) # [b, 64, head, N], [b, head, N, N]
-        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1)), attn
+        x, _ = attention(query, key, value, mask) # [b, 64, head, N], [b, head, N, N]
+        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1))
 
 class AttentionalPropagation(nn.Module):
     def __init__(self, feature_dim: int, num_heads: int, norm_layer=nn.BatchNorm1d):
@@ -237,8 +237,8 @@ class AttentionalPropagation(nn.Module):
     def forward(self, x, source, mask=None):
         # x, source: [b, 256(feature_dim), N]
         # attn(q, k, v)
-        message, attention = self.attn(x, source, source, mask) # [b, 256, N], [b, 4, N, N]
-        return self.mlp(torch.cat([x, message], dim=1)), attention # [4, 512, 300] -> [4, 256, 300], [b, 4, N, N]
+        message = self.attn(x, source, source, mask) # [b, 256, N], [b, 4, N, N]
+        return self.mlp(torch.cat([x, message], dim=1)) # [4, 512, 300] -> [4, 256, 300], [b, 4, N, N]
 
 class AttentionalGNN(nn.Module):
     def __init__(self, feature_dim: int, layer_names: list, norm_layer=nn.BatchNorm1d):
@@ -252,18 +252,15 @@ class AttentionalGNN(nn.Module):
         # Only self-attention is implemented for now
         # embedding: [b, 256, N]
         # mask: [b, 1, N]
-        attentions = []
         for layer, name in zip(self.layers, self.names):
             # if name == 'cross':
             #     src0, src1 = desc1, desc0
             # else:  # if name == 'self':
             #     src0, src1 = desc0, desc1
             # Attentional propagation
-            delta, attention = layer(embedding, embedding, mask) # [b, 256, N], [b, 4, N, N]
-            attentions.append(attention)
+            delta = layer(embedding, embedding, mask) # [b, 256, N], [b, 4, N, N]
             embedding = (embedding + delta) # [b, 256, N]
-        attentions = torch.stack(attentions, dim=1) # [b, L, 4, N, N]
-        return embedding, attentions
+        return embedding
 
 class GraphEncoder(nn.Module):
     """ Joint encoding of vertices and distance transform embeddings """
@@ -294,9 +291,9 @@ class VectorMapNet(nn.Module):
         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
         self.max_vertices = data_conf['num_vectors'] # 300
         self.feature_dim = data_conf['feature_dim'] # 256
-        # self.pos_freq = data_conf['pos_freq']
+        self.pos_freq = data_conf['pos_freq']
         self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
-        # self.GNN_layers = gnn_layers
+        self.gnn_layers = data_conf['gnn_layers']
         self.refine = refine
 
         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
@@ -310,10 +307,12 @@ class VectorMapNet(nn.Module):
         # Graph neural network
         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
-        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size # if distance_reg else 256 # 192 or 256
-        if distance_reg:
-            self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
-        self.gnn = AttentionalGNN(self.feature_dim, data_conf['gnn_layers'], norm_layer_dict['1d'])
+        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
+        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256 for visual descriptor
+        # if distance_reg:
+        #     self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
+            # self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim+3, 64, 128, 256], norm_layer_dict['1d']) # temp
+        self.gnn = AttentionalGNN(self.feature_dim, ['self']*self.gnn_layers, norm_layer_dict['1d'])
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
         bin_score = nn.Parameter(torch.tensor(1.))
@@ -370,8 +369,12 @@ class VectorMapNet(nn.Module):
             dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
         else:
             # distance: segmentation [b, 3, 200, 400]
-            distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
-            dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
+            # distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
+            # dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
+
+            # distance: feature [b, 256, 100, 200]
+            distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
+            dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
@@ -390,12 +393,15 @@ class VectorMapNet(nn.Module):
         pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
         pos_embedding = torch.stack(pos_embedding) # [b, N, pe_dim+1]
 
+        # dt_embedding = [torch.cat((d, v, s.unsqueeze(1)), dim=1) for d, v, s in zip(dt_embedding, vertices_norm, scores)] # temp
         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
+        # graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # for visual descriptor
+        # graph_embedding = self.dtenc(dt_embedding) # temp
         # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding, attentions = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
+        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
         if self.refine:
             offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
@@ -439,4 +445,4 @@ class VectorMapNet(nn.Module):
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks, attentions
+        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks

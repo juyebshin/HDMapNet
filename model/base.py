@@ -292,7 +292,8 @@ class BevEncode(nn.Module):
             else:
                 x_seg = None
         else:
-            x_dt = None # b, 4, 200, 400 # semantic segmentation prediction
+            # x_dt = None # b, 4, 200, 400 # semantic segmentation prediction
+            x_dt = x # for visual descriptor
             if self.segmentation:
                 x_seg = self.up2(x) # b, 4, 200, 400 # semantic segmentation prediction
             else:

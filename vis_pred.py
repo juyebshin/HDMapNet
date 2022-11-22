@@ -49,7 +49,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
@@ -58,7 +58,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             matches_top2, indices_top2 = torch.topk(matches.exp(), 2, -1) # [b, N+1, 2]
             matches = matches.exp().cpu().float().numpy() # b, N+1, N+1 for sinkhorn
             masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
-            attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
+            # attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan
             # semantic[semantic < 0.1] = 0.0
 
@@ -73,6 +73,12 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
             distance_gt = (distance_gt - vmin) / (vmax - vmin)
 
             for si in range(imgs.shape[0]): # iterate over batch
+                idx = batchi*val_loader.batch_size + si
+                rec = val_loader.dataset.samples[idx]
+                scene_name = val_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
+                lidar_top_path = val_loader.dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+                base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+                base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
                 # semantic: b, 4, 200, 400
                 # semantic_pred_onehot = np.argmax(semantic[si], axis=0)
                 # semantic_pred_color = semantic_color[semantic_pred_onehot].astype('uint8') # 200, 400, 3
@@ -106,31 +112,31 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                 # Image.fromarray(img_grid).save(imname)
 
                 # distance: b, 3, 200, 400
-                # if distance_reg:
-                #     distance_pred = np.max(distance[si], axis=0) # 200, 400
-                #     distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
-                #     impath = os.path.join(logdir, 'dist')
-                #     if not os.path.exists(impath):
-                #         os.mkdir(impath)
-                #     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                #     print('saving', imname)
-                #     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
+                if distance_reg:
+                    distance_pred = np.max(distance[si], axis=0) # 200, 400
+                    distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'dist')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'{base_name}.png')
+                    print('saving', imname)
+                    Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
-                #     # for idx, distance_single in enumerate(distance[si]): # for each class 0, 1, 2
-                #     #     distance_pred_color = dist_cmap(distance_single)[..., :3] * 255 # 200, 400, 3
-                #     #     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}_{idx:01}.png')
-                #     #     print('saving', imname)
-                #     #     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
+                    # for idx, distance_single in enumerate(distance[si]): # for each class 0, 1, 2
+                    #     distance_pred_color = dist_cmap(distance_single)[..., :3] * 255 # 200, 400, 3
+                    #     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}_{idx:01}.png')
+                    #     print('saving', imname)
+                    #     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
-                #     # distance_gt: b, 3, 200, 400
-                #     distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
-                #     distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
-                #     impath = os.path.join(logdir, 'dist_gt')
-                #     if not os.path.exists(impath):
-                #         os.mkdir(impath)
-                #     imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
-                #     print('saving', imname)
-                #     Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
+                    # distance_gt: b, 3, 200, 400
+                    distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
+                    distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
+                    impath = os.path.join(logdir, 'dist_gt')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'{base_name}.png')
+                    print('saving', imname)
+                    Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
                 if vertex_pred:
                     # heatmap
@@ -145,7 +151,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     impath = os.path.join(logdir, 'heatmap')
                     if not os.path.exists(impath):
                         os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    imname = os.path.join(impath, f'{base_name}.png')
                     print('saving', imname)
                     Image.fromarray(heatmap_color.astype('uint8')).save(imname)
                     # vertex
@@ -157,7 +163,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     impath = os.path.join(logdir, 'vertex')
                     if not os.path.exists(impath):
                         os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    imname = os.path.join(impath, f'{base_name}.png')
                     print('saving', imname)
                     Image.fromarray(vertex_color.astype('uint8')).save(imname)
                     
@@ -205,6 +211,25 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     position_valid = position_valid * dx + bx # [-30, -15, 30, 15]
                     position_valid = position_valid[mask == 1] # [M, 3]
 
+                    # vector segmentation prediction
+                    semantic_onehot = semantic[si].exp().detach().cpu().float().numpy() # [3, N]
+                    semantic_onehot = semantic_onehot.argmax(0)[mask == 1] # [M]
+
+                    fig = plt.figure(figsize=(4, 2))
+                    plt.xlim(-30, 30)
+                    plt.ylim(-15, 15)
+                    plt.axis('off')
+                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=1.0, c=[colors_plt[c] for c in semantic_onehot])
+                    
+                    impath = os.path.join(logdir, 'segmentation')
+                    if not os.path.exists(impath):
+                        os.mkdir(impath)
+                    imname = os.path.join(impath, f'{base_name}.png')
+                    print('saving', imname)
+                    plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                    plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                    plt.close()
+
                     # # matches
                     # mask_bin = np.concatenate([mask, [1]], 0) # [N + 1]
                     # match = matches[si] # [N, N+1]
@@ -237,7 +262,7 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     impath = os.path.join(logdir, 'vector_top2')
                     if not os.path.exists(impath):
                         os.mkdir(impath)
-                    imname = os.path.join(impath, f'eval{batchi:06}_{si:03}.png')
+                    imname = os.path.join(impath, f'{base_name}.png')
                     print('saving', imname)
 
                     fig = plt.figure(figsize=(4, 2))
@@ -393,7 +418,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
             
-            semantic, distance, vertex, embedding, direction, matches, positions, masks, attentions = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             
@@ -408,28 +433,30 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
 
                 print(f'batch index {batchi:06}_{si:03}')
                 
-                # vector_gt = vectors_gt[si] # [instance] list of dict
+                vector_gt = vectors_gt[si] # [instance] list of dict
 
-                # impath = os.path.join(logdir, 'vector_gt')
-                # if not os.path.exists(impath):
-                #     os.mkdir(impath)
-                # imname = os.path.join(impath, f'{base_name}.png')
-                # print('saving', imname)
+                impath = os.path.join(logdir, 'vector_gt')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'{base_name}.png')
+                print('saving', imname)
 
-                # fig = plt.figure(figsize=(4, 2))
-                # plt.xlim(-30, 30)
-                # plt.ylim(-15, 15)
-                # plt.axis('off')
+                fig = plt.figure(figsize=(4, 2))
+                plt.xlim(-30, 30)
+                plt.ylim(-15, 15)
+                plt.axis('off')
 
-                # for vector in vector_gt:
-                #     pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-                #     pts = pts[:pts_num]
-                #     x = np.array([pt[0] for pt in pts])
-                #     y = np.array([pt[1] for pt in pts])
-                #     plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-                # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                # plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                # plt.close()
+                for vector in vector_gt:
+                    pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                    pts = pts[:pts_num]
+                    x = np.array([pt[0] for pt in pts])
+                    y = np.array([pt[1] for pt in pts])
+                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                    plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
+                    plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                plt.close()
 
                 impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
@@ -459,10 +486,10 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                     if i > 2:
                         img = cv2.flip(img, 1)
                     img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
-                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 3)
+                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_COMPLEX, 3, 3)
                     text_w, text_h = text_size
                     cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
+                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_COMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
                     ax.imshow(img)
                     
                 plt.subplots_adjust(wspace=0.0, hspace=0.0)
@@ -609,15 +636,16 @@ def main(args):
     }
 
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
-    model.load_state_dict(torch.load(args.modelf), strict=False)
+    norm_layer_dict = {'1d': torch.nn.BatchNorm1d, '2d': torch.nn.BatchNorm2d}
+    model = get_model(args.model, data_conf, norm_layer_dict, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
-    # vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
+    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     # if args.instance_seg and args.direction_pred:
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
-    if args.model == 'VectorMapNet_cam':
-        vis_vectormapnet(model, val_loader, args.logdir, data_conf)
+    # if args.model == 'VectorMapNet_cam':
+    #     vis_vectormapnet(model, val_loader, args.logdir, data_conf)
         # vis_vectormapnet_scene(args.dataroot, args.version, model, args)
 
 
@@ -675,7 +703,7 @@ if __name__ == '__main__':
     parser.add_argument("--scale_dt", type=float, default=1.0)
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false')
+    parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
@@ -696,7 +724,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=['self']*7)
+    parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
