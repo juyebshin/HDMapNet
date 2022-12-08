@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 import tqdm
 import torch
+import os
 
 from data.dataset import semantic_dataset
 from data.const import NUM_CLASSES
@@ -49,9 +50,10 @@ def vis_segmentation(model, val_loader):
                 plt.close()
 
 
-def vis_vector(model, val_loader, angle_class):
+def vis_vector(model, val_loader, angle_class, logdir):
     model.eval()
     car_img = Image.open('icon/car.png')
+    colors_plt = ['tab:red', 'tab:blue', 'tab:green', 'k']
 
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, segmentation_gt, instance_gt, direction_gt) in enumerate(val_loader):
@@ -61,18 +63,49 @@ def vis_vector(model, val_loader, angle_class):
                                                        lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
             for si in range(segmentation.shape[0]):
-                coords, _, _ = vectorize(segmentation[si], embedding[si], direction[si], angle_class)
+                coords, confidences, line_types = vectorize(segmentation[si], embedding[si], direction[si], angle_class)
+                
+                idx = batchi*val_loader.batch_size + si
+                rec = val_loader.dataset.samples[idx]
+                scene_name = val_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
+                lidar_top_path = val_loader.dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
+                base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
+                base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
+                
+                impath = os.path.join(logdir, 'instance')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
 
-                for coord in coords:
-                    plt.plot(coord[:, 0], coord[:, 1], linewidth=5)
-
+                fig = plt.figure(figsize=(4, 2))
                 plt.xlim((0, segmentation.shape[3]))
                 plt.ylim((0, segmentation.shape[2]))
+                plt.axis('off')
+                for coord in coords:
+                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0)
                 plt.imshow(car_img, extent=[segmentation.shape[3]//2-15, segmentation.shape[3]//2+15, segmentation.shape[2]//2-12, segmentation.shape[2]//2+12])
 
-                img_name = f'eval{batchi:06}_{si:03}.jpg'
-                print('saving', img_name)
-                plt.savefig(img_name)
+                imname = os.path.join(impath, f'{base_name}.jpg')
+                print('saving', imname)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                plt.close()
+                
+                impath = os.path.join(logdir, 'vector')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+
+                fig = plt.figure(figsize=(4, 2))
+                plt.xlim((0, segmentation.shape[3]))
+                plt.ylim((0, segmentation.shape[2]))
+                plt.axis('off')
+                for coord, line_type in zip(coords, line_types):
+                    # plt.plot(coord[:, 0], coord[:, 1], linewidth=5)
+                    plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
+                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+                plt.imshow(car_img, extent=[segmentation.shape[3]//2-15, segmentation.shape[3]//2+15, segmentation.shape[2]//2-12, segmentation.shape[2]//2+12])
+
+                imname = os.path.join(impath, f'{base_name}.jpg')
+                print('saving', imname)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
 
@@ -92,7 +125,7 @@ def main(args):
     model = get_model(args.model, data_conf, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.cuda()
-    vis_vector(model, val_loader, args.angle_class)
+    vis_vector(model, val_loader, args.angle_class, args.logdir)
     # vis_segmentation(model, val_loader)
 
 
@@ -102,8 +135,8 @@ if __name__ == '__main__':
     parser.add_argument("--logdir", type=str, default='./runs')
 
     # nuScenes config
-    parser.add_argument('--dataroot', type=str, default='dataset/nuScenes/')
-    parser.add_argument('--version', type=str, default='v1.0-mini', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--dataroot', type=str, default='./nuscenes')
+    parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')

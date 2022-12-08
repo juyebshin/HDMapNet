@@ -28,7 +28,7 @@ class HDMapNetDataset(Dataset):
         self.data_conf = data_conf
         self.patch_size = (patch_h, patch_w)
         self.canvas_size = (canvas_h, canvas_w)
-        self.nusc = NuScenes(version=version, dataroot=dataroot, verbose=False)
+        self.nusc = NuScenes(version=version, dataroot=dataroot, verbose=True)
         self.vector_map = VectorizedLocalMap(dataroot, patch_size=self.patch_size, canvas_size=self.canvas_size)
         self.scenes = self.get_scenes(version, is_train)
         self.samples = self.get_samples()
