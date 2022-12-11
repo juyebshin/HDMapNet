@@ -15,8 +15,10 @@ def get_model(method, data_conf, norm_layer_dict, segmentation=True, instance_se
         model = PointPillar(data_conf, embedded_dim=embedded_dim)
     elif method == 'HDMapNet_fusion':
         model = HDMapNet(data_conf, segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=True, distance_reg=distance_reg, vertex_pred=vertex_pred)
-    elif method == "VectorMapNet_cam":
+    elif method == "InstaGraM_cam":
         model = VectorMapNet(data_conf, norm_layer_dict, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=False, distance_reg=distance_reg, refine=refine)
+    elif method == "InstaGraM_fusion":
+        model = VectorMapNet(data_conf, norm_layer_dict, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, direction_dim=angle_class, lidar=True, distance_reg=distance_reg, refine=refine)
     else:
         raise NotImplementedError
 
