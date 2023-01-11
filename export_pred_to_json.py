@@ -158,11 +158,11 @@ if __name__ == '__main__':
                         help="log2 of max freq for positional encoding (2D vertex location)")
                                                 
     # vector refinement config
-    parser.add_argument("--refine", action='store_true')
+    parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.01)
+    parser.add_argument("--vertex_threshold", type=float, default=0.5)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)

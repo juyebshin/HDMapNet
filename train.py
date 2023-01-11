@@ -110,7 +110,7 @@ def train(args):
     embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
-    vt_loss_fn = CEWithSoftmaxLoss().cuda()
+    vt_loss_fn = torch.nn.BCEWithLogitsLoss().cuda()
     graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
 
     model.train()
@@ -134,9 +134,9 @@ def train(args):
             semantic_gt = semantic_gt.cuda().float()
             instance_gt = instance_gt.cuda()
             distance_gt = distance_gt.cuda()
-            vertex_gt = vertex_gt.cuda().float()
+            vertex_gt = vertex_gt.cuda().float() # [b, 3, 64, 25, 50]
 
-            vt_loss = vt_loss_fn(vertex, vertex_gt)
+            vt_loss = vt_loss_fn(vertex, vertex_gt.max(2)[0])
 
             if args.instance_seg:
                 var_loss, dist_loss, reg_loss = embedded_loss_fn(embedding, instance_gt)
@@ -180,8 +180,8 @@ def train(args):
             t1 = time()
 
             if counter % 10 == 0:
-                heatmap = vertex.softmax(1)
-                intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
+                heatmap = vertex.sigmoid()
+                intersects, union = get_batch_iou(heatmap, vertex_gt.max(2)[0])
                 iou = intersects / (union + 1e-7)
                 cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
                 total_cdist = float((cdist_p + cdist_l)*0.5)
@@ -209,16 +209,16 @@ def train(args):
                     writer.add_scalar('train/vt_loss', vt_loss, counter)
                     writer.add_scalar('train/match_loss', match_loss, counter)
                     writer.add_scalar('train/cdist_loss', cdist_loss, counter)
-                    for bi, mask in enumerate(masks):
-                        writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
+                    # for bi, mask in enumerate(masks):
+                    #     writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0 and utils.is_main_process():
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
-                    heatmap = vertex.softmax(1)
+                    heatmap = vertex.sigmoid()
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt.max(2)[0], vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
                 
             counter += 1
 
@@ -333,11 +333,11 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # vector refinement config
-    parser.add_argument("--refine", action='store_true')
+    parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.015)
+    parser.add_argument("--vertex_threshold", type=float, default=0.5)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)

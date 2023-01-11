@@ -5,6 +5,8 @@ from loss import gen_dx_bx
 
 
 def get_batch_iou(pred_map, gt_map):
+    # pred_map: [b, 3, 25, 50]
+    # gt_map: [b, 3, 25, 50]
     intersects = []
     unions = []
     with torch.no_grad():

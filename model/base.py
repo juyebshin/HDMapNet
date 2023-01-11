@@ -239,8 +239,8 @@ class BevEncode(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
                 # b, 128, 25, 50
-                nn.Conv2d(128, cell_size*cell_size+1, kernel_size=1, padding=0), # 65: cell_size*cell_size + 1 (dustbin)
-                # b, cs^2+1, 25, 50
+                nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # three classes
+                # b, 3, 25, 50
             )
 
         self.instance_seg = instance_seg
@@ -279,7 +279,7 @@ class BevEncode(nn.Module):
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
 
         if self.vertex_pred:
-            x_vertex = self.vertex_head(x) # b, 65, 25, 50
+            x_vertex = self.vertex_head(x) # b, 3, 25, 50
         else:
             x_vertex = None
 

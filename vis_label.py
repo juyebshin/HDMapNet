@@ -46,7 +46,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.xlim(-30, 30)
         plt.ylim(-15, 15)
         plt.axis('off')
-        num_vectors = 0
+        num_vectors = np.zeros(len(colors_plt), np.int32)
         for vector in vectors:
             pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
             pts = pts[:pts_num]
@@ -55,8 +55,10 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
             # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
             plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
             plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
-            num_vectors += pts_num
-        num_vectors_list.append([base_path, num_vectors])
+            num_vectors[line_type] += pts_num
+        num_list = num_vectors.tolist()
+        num_list.insert(0, base_path)
+        num_vectors_list.append(num_list)
 
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
@@ -116,12 +118,13 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
     with open('num_vectors_train.csv', 'w') as f:
         print('saving number of vectors list to csv...')
         write = csv.writer(f)
+        num_vectors_list.insert(0, ['Frame', 'Divider', 'Ped. Crossing', 'Boundary'])
         write.writerows(num_vectors_list)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('dataroot', nargs='?', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])

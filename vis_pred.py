@@ -113,7 +113,9 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
 
                 # distance: b, 3, 200, 400
                 if distance_reg:
-                    distance_pred = np.max(distance[si], axis=0) # 200, 400
+                    # distance_pred = np.max(distance[si], axis=0) # 200, 400
+                    distance_pred = distance[si] # 3, 200, 400
+                    distance_pred = np.append(np.append(distance_pred[0], distance_pred[1], axis=1), distance_pred[2], axis=1) # 200, 1200
                     distance_pred_color = dist_cmap(distance_pred)[..., :3] * 255 # 200, 400, 3
                     impath = os.path.join(logdir, 'dist')
                     if not os.path.exists(impath):
@@ -129,7 +131,9 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     #     Image.fromarray(distance_pred_color.astype('uint8')).save(imname)
 
                     # distance_gt: b, 3, 200, 400
-                    distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
+                    # distance_gt_color = np.max(distance_gt[si], axis=0) # 200, 400
+                    distance_gt_color = distance_gt[si] # 3, 200, 400
+                    distance_gt_color = np.append(np.append(distance_gt_color[0], distance_gt_color[1], axis=1), distance_gt_color[2], axis=1) # 200, 1200
                     distance_gt_color = dist_cmap(distance_gt_color)[..., :3] * 255 # 200, 400, 3
                     impath = os.path.join(logdir, 'dist_gt')
                     if not os.path.exists(impath):
@@ -139,33 +143,30 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     Image.fromarray(distance_gt_color.astype('uint8')).save(imname)
 
                 if vertex_pred:
-                    # heatmap
-                    heatmap = vertex[si, :-1, :, :] # 64, 25, 50
-                    Hc, Wc = heatmap.shape[1:] # 25, 50
-                    heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
-                    heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
-                    heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-                    heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
-                    heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
-                    heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    impath = os.path.join(logdir, 'heatmap')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'{base_name}.png')
-                    print('saving', imname)
-                    Image.fromarray(heatmap_color.astype('uint8')).save(imname)
-                    # vertex
-                    # vertex_max = np.argmax(vertex[si], axis=0, keepdims=True) # 65, 25, 50 -> 1, 25, 50
-                    # one_hot = np.full(vertex[si].shape, 0) # zeros 65, 25, 50
-                    # np.put_along_axis(one_hot, vertex_max, 1, axis=0) # 65, 25, 50
-                    heatmap[heatmap > 0] = 1
-                    vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
-                    impath = os.path.join(logdir, 'vertex')
-                    if not os.path.exists(impath):
-                        os.mkdir(impath)
-                    imname = os.path.join(impath, f'{base_name}.png')
-                    print('saving', imname)
-                    Image.fromarray(vertex_color.astype('uint8')).save(imname)
+                    # # heatmap
+                    # heatmap = vertex[si, :-1, :, :] # 64, 25, 50
+                    # Hc, Wc = heatmap.shape[1:] # 25, 50
+                    # heatmap = heatmap.transpose(1, 2, 0) # 25, 50, 64
+                    # heatmap = np.reshape(heatmap, [Hc, Wc, cell_size, cell_size]) # 25, 50, 8, 8
+                    # heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+                    # heatmap = np.reshape(heatmap, [Hc*cell_size, Wc*cell_size]) # 200, 400
+                    # heatmap[heatmap < conf_threshold] = 0.0 # 200, 400
+                    # heatmap_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    # impath = os.path.join(logdir, 'heatmap')
+                    # if not os.path.exists(impath):
+                    #     os.mkdir(impath)
+                    # imname = os.path.join(impath, f'{base_name}.png')
+                    # print('saving', imname)
+                    # Image.fromarray(heatmap_color.astype('uint8')).save(imname)
+                    # # vertex
+                    # heatmap[heatmap > 0] = 1
+                    # vertex_color = vertex_cmap(heatmap)[..., :3] * 255 # 200, 400, 3
+                    # impath = os.path.join(logdir, 'vertex')
+                    # if not os.path.exists(impath):
+                    #     os.mkdir(impath)
+                    # imname = os.path.join(impath, f'{base_name}.png')
+                    # print('saving', imname)
+                    # Image.fromarray(vertex_color.astype('uint8')).save(imname)
                     
                     # nodust_gt = vertex_gt[si, :-1, :, :] # 64, 25, 50
                     # Hc, Wc = nodust_gt.shape[1:] # 25, 50
@@ -641,11 +642,12 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
+    # todo: class-wise vertex detection
     vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     # if args.instance_seg and args.direction_pred:
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
-    # if args.model == 'VectorMapNet_cam':
-    #     vis_vectormapnet(model, val_loader, args.logdir, data_conf)
+    if args.model == 'InstaGraM_cam':
+        vis_vectormapnet(model, val_loader, args.logdir, data_conf)
         # vis_vectormapnet_scene(args.dataroot, args.version, model, args)
 
 
@@ -659,7 +661,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='VectorMapNet_cam')
+    parser.add_argument("--model", type=str, default='InstaGraM_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
@@ -718,11 +720,11 @@ if __name__ == '__main__':
     parser.add_argument("--segmentation", action='store_true')
 
     # vector refinement config
-    parser.add_argument("--refine", action='store_true')
+    parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.01)
+    parser.add_argument("--vertex_threshold", type=float, default=0.5)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)

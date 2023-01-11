@@ -50,7 +50,7 @@ def remove_borders(vertices, scores, border: int, height: int, width: int):
 
 def sample_dt(vertices, distance: Tensor, s: int = 8):
     """ Extract distance transform patches around vertices """
-    # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
+    # vertices: # tuple of length b, [N, 3(class, row, col)] tensor, in (25, 50) cell
     # distance: (b, 3, 200, 400) tensor
     # embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
     embedding = distance # 0 ~ 10 -> 0 ~ 1 normalize
@@ -59,25 +59,25 @@ def sample_dt(vertices, distance: Tensor, s: int = 8):
     embedding = embedding.reshape(b, c, hc, s, wc, s).permute(0, 1, 2, 4, 3, 5) # b, c, 25, 8, 50, 8 -> b, c, 25, 50, 8, 8
     embedding = embedding.reshape(b, c, hc, wc, s*s).permute(0, 2, 3, 1, 4) # b, c, 25, 50, 64 -> b, 25, 50, 3, 64
     embedding = embedding.reshape(b, hc, wc, -1) # b, 25, 50, 192
-    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
+    embedding = [e[tuple(vc[:, 1:].t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
     return embedding
 
 def sample_feat(vertices, feature: Tensor):
     """ Extract feature patches around vertices """
-    # vertices: # tuple of length b, [N, 2(row, col)] tensor, in (25, 50) cell
+    # vertices: # tuple of length b, [N, 3(class, row, col)] tensor, in (25, 50) cell
     # feature: (b, 256, 25, 50) tensor
     b, c, h, w = feature.shape # b, 256, 25, 50
     embedding = feature.permute(0, 2, 3, 1) # [b, 25, 50, 256]
-    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 256] tensor
+    embedding = [e[tuple(vc[:, 1:].t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 256] tensor
     return embedding
 
 def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
-    # vertices: [N, 2] tensor in (x, y): (0~399, 0~199)
-    _, height, width = image_shape # b, h, w
+    # vertices: [N, 2] tensor in (x, y): (0~49, 0~24)
+    _, _, height, width = image_shape # b, 3, 25, 50
     one = vertices.new_tensor(1) # [1], values 1
-    size = torch.stack([one*width, one*height])[None] # [1, 2], values [400, 200]
-    center = size / 2 # [1, 2], values [200, 100]
+    size = torch.stack([one*width, one*height])[None] # [1, 2], values [50, 25]
+    center = size / 2.0 # [1, 2], values [25, 12.5]
     return (vertices - center + 0.5) / size # [N, 2] values [-0.5, 0.4975] or [-0.49875, 0.49875]
 
 def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int):
@@ -320,8 +320,8 @@ class VectorMapNet(nn.Module):
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
-        if self.refine:
-            self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
+        # if self.refine:
+        self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         """ semantic, instance, direction are not used
@@ -332,16 +332,16 @@ class VectorMapNet(nn.Module):
         semantic, distance, vertex, instance, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
 
         # Compute the dense vertices scores (heatmap)
-        scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        scores = scores[:, :-1] # b, 64, 25, 50
-        b, _, h, w = scores.shape # b, 64, 25, 50
-        mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
-        scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
-        scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
-        scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
-        score_shape = scores_max.shape # b, 200, 400
+        scores = torch.sigmoid(vertex) # (b, 3, 25, 50)
+        # scores = scores[:, :-1] # b, 64, 25, 50
+        # b, _, h, w = scores.shape # b, 64, 25, 50
+        # mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
+        # scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
+        # scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
+        # scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        # scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        # scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
+        score_shape = scores.shape # b, 3, 25, 50
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
         # scores[scores < self.vertex_threshold] = 0.0
@@ -360,13 +360,13 @@ class VectorMapNet(nn.Module):
         # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
 
         # [2] Extract vertices using NMS
-        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores_max] # list of length b, [N, 2(row, col)] tensor
-        scores = [s[tuple(v.t())] for s, v in zip(scores_max, vertices)] # list of length b, [N] tensor
-        vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
+        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores] # list of length b, [N, 3(class, row, col)] tensor
+        scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+        # vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
 
         # Extract distance transform
         if self.distance_reg:
-            dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
+            dt_embedding = sample_dt(vertices, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
         else:
             # distance: segmentation [b, 3, 200, 400]
             # distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
@@ -374,11 +374,11 @@ class VectorMapNet(nn.Module):
 
             # distance: feature [b, 256, 100, 200]
             distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
-            dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
+            dt_embedding = sample_feat(vertices, distance_down) # list of [N, 256] tensor
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
-                top_k_vertices(v, s, d, self.max_vertices)
+                top_k_vertices(v[:, 1:], s, d, self.max_vertices) # v[:, 1:]: [N, 2]
                 for v, s, d in zip(vertices, scores, dt_embedding)
             ]))
 
@@ -387,7 +387,7 @@ class VectorMapNet(nn.Module):
         vertices_norm = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
         
         # Vertices in pixel coordinate
-        vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x, y
+        vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x: [0~49], y: [0~24]
 
         # Positional embedding (x, y, c)
         pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
@@ -403,8 +403,8 @@ class VectorMapNet(nn.Module):
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
-        if self.refine:
-            offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
+        # if self.refine:
+        offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
@@ -436,10 +436,10 @@ class VectorMapNet(nn.Module):
         # matches.exp() should be probability
 
         # Refinement offset in pixel coordinate
-        if self.refine:
-            _, h, w = score_shape
-            offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
-            vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
+        # if self.refine:
+        _, _, h, w = distance.shape # b, 3, 200, 400
+        offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
+        vertices = torch.clamp(vertices*self.cell_size + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 

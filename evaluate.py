@@ -31,7 +31,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         return
     # imgs: b, 6, 3, 128, 352
     # dt: b, 3, 200, 400 tensor
-    # heatmap: b, 65, 25, 50 tensor
+    # heatmap: b, 3, 25, 50 tensor
     imgs = imgs.detach().cpu().float()[0] # 6, 3, 128, 352
     # imgs = imgs.fliplr()
     imgs[3:] = torch.flip(imgs[3:], [3,])
@@ -51,35 +51,29 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     
     if heatmap is not None:
         # vertex = onehot_encoding(heatmap)
-        heatmap = heatmap.detach().cpu().float().numpy()[0] # 65, 25, 50
-        # vertex = vertex.detach().cpu().float().numpy()[0] # 65, 25, 50, onehot
-        vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 65, 25, 50
+        heatmap = heatmap.detach().cpu().float().numpy()[0] # 3, 25, 50
+        # vertex = vertex.detach().cpu().float().numpy()[0] # 3, 25, 50, onehot
+        vt_mask = vt_mask.detach().cpu().float().numpy()[0] # 3, 25, 50
 
-        nodust_gt = vt_mask[:-1, :, :] # 64, 25, 50
-        Hc, Wc = vt_mask.shape[1:] # 25, 50
-        nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
-        heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, args.cell_size, args.cell_size]) # 25, 50, 8, 8
-        heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
-        heatmap_gt = np.reshape(heatmap_gt, [Hc*args.cell_size, Wc*args.cell_size]) # 200, 400
+        # nodust_gt = vt_mask[:-1, :, :] # 3, 25, 50
+        # Hc, Wc = vt_mask.shape[1:] # 25, 50
+        # nodust_gt = nodust_gt.transpose(1, 2, 0) # 25, 50, 64
+        # heatmap_gt = np.reshape(nodust_gt, [Hc, Wc, args.cell_size, args.cell_size]) # 25, 50, 8, 8
+        # heatmap_gt = np.transpose(heatmap_gt, [0, 2, 1, 3]) # 25, 8, 50, 8
+        # heatmap_gt = np.reshape(heatmap_gt, [Hc*args.cell_size, Wc*args.cell_size]) # 200, 400
 
-        nodust = heatmap[:-1, :, :] # 64, 25, 50
-        nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-        heatmap = np.reshape(nodust, [Hc, Wc, args.cell_size, args.cell_size]) # 25, 50, 8, 8
-        heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
-        heatmap = np.reshape(heatmap, [Hc*args.cell_size, Wc*args.cell_size]) # 200, 400
-
-        # nodust = vertex[:-1, :, :] # 64, 25, 50
+        # nodust = heatmap[:-1, :, :] # 64, 25, 50
         # nodust = nodust.transpose(1, 2, 0) # 25, 50, 64
-        # vertex = np.reshape(nodust, [Hc, Wc, 8, 8]) # 25, 50, 8, 8
-        # vertex = np.transpose(vertex, [0, 2, 1, 3]) # 25, 8, 50, 8
-        # vertex = np.reshape(vertex, [Hc*8, Wc*8]) # 200, 400
+        # heatmap = np.reshape(nodust, [Hc, Wc, args.cell_size, args.cell_size]) # 25, 50, 8, 8
+        # heatmap = np.transpose(heatmap, [0, 2, 1, 3]) # 25, 8, 50, 8
+        # heatmap = np.reshape(heatmap, [Hc*args.cell_size, Wc*args.cell_size]) # 200, 400
 
-        writer.add_image(f'{title}/vertex_heatmap_gt', colorise(heatmap_gt, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        writer.add_image(f'{title}/vertex_heatmap_gt', colorise(vt_mask, 'hot', 0.0, 1.0), step, dataformats='NHWC')
         # writer.add_image(f'{title}/vertex_heatmap_pred', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
         # writer.add_image(f'{title}/vertex_onehot_pred', colorise(vertex, 'hot', 0.0, 1.0), step, dataformats='HWC')
         heatmap[heatmap < args.vertex_threshold] = 0.0
         heatmap[heatmap > 0.0] = 1.0
-        writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='HWC')
+        writer.add_image(f'{title}/vertex_heatmap_bin', colorise(heatmap, 'hot', 0.0, 1.0), step, dataformats='NHWC')
     
     if matches is not None and positions is not None and masks is not None:
         # matches: [b, N+1, N+1]
@@ -248,10 +242,10 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
-            heatmap = vertex.softmax(1) # b, 65, 25, 50
+            heatmap = vertex.sigmoid() # b, 3, 25, 50
             matches = matches.exp() # b, N+1, N+1
-            vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-            intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
+            vertex_gt = vertex_gt.cuda().float() # b, 3, 64, 25, 50
+            intersects, union = get_batch_iou(heatmap, vertex_gt.max(2)[0])
             total_intersects += intersects
             total_union += union
 
@@ -268,7 +262,7 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
                         # distance_gt = distance_gt.cuda() # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, step, args)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt.max(2)[0], vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, step, args)
             
             counter += 1
 
