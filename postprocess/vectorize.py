@@ -117,6 +117,10 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     confidences: [ins] list of float
     line_types: [ins] list of index
     """
+    confidences = []
+    line_types = []
+    simplified_coords = []
+
     assert match.shape[0] == match.shape[1], f"match.shape[0]: {match.shape[0]} != match.shape[1]: {match.shape[1]}"
     assert positions.shape[0] == segmentation.shape[1] == mask.shape[0], f"Following shapes mismatch: positions.shape[0]({positions.shape[0]}), segmentation.shape[1]({segmentation.shape[1]}), mask.shape[0]({mask.shape[0]}"
 
@@ -124,6 +128,8 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     mask_bin = torch.cat([mask, mask.new_tensor(1).view(1)], 0) # [N+1]
     match = match.exp().cpu()[mask_bin == 1][:, mask_bin == 1] # [M+1, M+1]
     positions = positions.cpu().numpy()[mask == 1] # [M, 3]
+    if match.shape[0] < 3:
+        return simplified_coords, confidences, line_types
     # adj_mat = torch.zeros_like(match[:-1]) # [M, M+1]
     adj_mat = match[:-1, :-1] > match_threshold # [M, M] for > threshold
     # adj_onehot = onehot_encoding(match[:-1, :-1], 1).bool() # [N, N]
@@ -136,10 +142,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     segmentation = segmentation.exp() # [4, N]
     seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [4, M] 0, 1, 2, 3
     segmentation = segmentation.cpu().numpy()[:, mask == 1] # [4, M]
-
-    confidences = []
-    line_types = []
-    simplified_coords = []
+    
     for i in range(seg_onehot.shape[0]): # 0, 1, 2
         single_mask = np.expand_dims(seg_onehot[i].astype('uint8'), 1) # [M, 1]
         single_match_mask = single_mask @ single_mask.T # [M, M] symmetric
