@@ -49,12 +49,22 @@ class HDMapNetDataset(Dataset):
         return create_splits_scenes()[split]
 
     def get_samples(self):
+        # import json
+        # with open('novectors_token.json', 'r') as f:
+        #     tmp = json.load(f)
         samples = [samp for samp in self.nusc.sample]
-
+        # samples = [samp for samp in samples if samp['token'] not in tmp]
         # remove samples that aren't in this split
-        samples = [samp for samp in samples if
-                   self.nusc.get('scene', samp['scene_token'])['name'] in self.scenes]
         
+        ### from line 59 to line 65, editted by hyeonjun
+        # samples = [samp for samp in samples if
+        #            self.nusc.get('scene', samp['scene_token'])['name'] in self.scenes]
+        
+        if self.is_train:
+            samples = [samp for samp in samples if self.nusc.get('log', self.nusc.get('scene', samp['scene_token'])['log_token'])['location'] != 'singapore-onenorth']
+        else:
+            samples = [samp for samp in samples if self.nusc.get('log', self.nusc.get('scene', samp['scene_token'])['log_token'])['location'] == 'singapore-onenorth']
+
         # # keyframe blob only
         # samples = []
         # for scene in self.nusc.scene:

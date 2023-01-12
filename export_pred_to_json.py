@@ -74,7 +74,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
                     vector = {'pts': coord * dx + bx, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
                     vectors.append(vector)
-                rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
+                rec = val_loader.dataset.samples[batchi * val_loader.batch_sampler.batch_size + si]
                 submission['results'][rec['token']] = vectors
 
     mmcv.dump(submission, args.output)
@@ -110,7 +110,7 @@ def main(args):
     model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
-    export_vectormapnet_to_json(model, val_loader, args.angle_class, args)
+    export_vectormapnet_to_json(model, train_loader, args.angle_class, args)
 
 
 if __name__ == '__main__':

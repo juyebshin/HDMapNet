@@ -2,7 +2,7 @@ from matplotlib.cm import get_cmap
 import numpy as np
 from PIL import Image
 
-colors_plt = ['tab:red', 'tab:blue', 'tab:green', 'k']
+colors_plt = ['tab:red', 'tab:orange', 'tab:blue', 'tab:green'] # road_divider, lane_divider, ped_crossing, contours
 
 def colorise(input, cmap, vmin=None, vmax=None):
 
