@@ -290,7 +290,7 @@ if __name__ == '__main__':
     parser.add_argument("--thickness", type=int, default=5)
     parser.add_argument("--image_size", nargs=2, type=int, default=[128, 352])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
-    parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
+    parser.add_argument("--ybound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
     parser.add_argument("--sample_dist", type=float, default=1.5) # 1.5

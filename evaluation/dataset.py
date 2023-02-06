@@ -39,5 +39,41 @@ class HDMapNetEvalDataset(HDMapNetDataset):
             confidence_level = self.prediction['results'][rec['token']]['confidence_level']
 
         confidence_level = torch.tensor(confidence_level + [-1] * (self.max_line_count - len(confidence_level)))
-
+        # self.visualize_vec(rec, gt_vectors, pred_vectors)
         return pred_map, confidence_level, gt_map
+
+    def visualize_vec(self, rec, gt_vectors, pred_vectors):
+        from matplotlib import pyplot as plt
+        
+        token = rec['token']
+        val_ls = []
+        with open('/home/user/data/hyeonjun/VectorLoc/samps/sample_val_rand.json', 'r') as f:
+            val_ls = json.load(f)
+
+        if token in val_ls:
+            fig, ax = plt.subplots(1,2, figsize=(13.0, 7.2))
+            ax[0].cla()
+            ax[1].cla()
+            # color_map = ['gray', 'red', 'orange', 'blue', 'green', 'magenta', 'cyan']
+            color_map = ['gray', 'orange', 'blue', 'green', 'magenta', 'cyan']
+            color_map = np.array(color_map)
+            for i, ins in enumerate(gt_vectors):
+                ins_pts = np.array(ins['pts'], dtype=np.float32)
+                ax[0].scatter(ins_pts[:,1], ins_pts[:,0], color=color_map[ins['type']+1], s=30)
+                ax[0].plot(ins_pts[:,1], ins_pts[:,0], color=color_map[ins['type']+1], linewidth=7, alpha=0.7)
+            for i, ins in enumerate(pred_vectors):
+                ins_pts = np.array(ins['pts'], dtype=np.float32)
+                ax[1].scatter(ins_pts[:,1], ins_pts[:,0], color=color_map[ins['type']+1], s=30)
+                ax[1].plot(ins_pts[:,1], ins_pts[:,0], color=color_map[ins['type']+1], linewidth=7, alpha=0.7)
+            ax[0].set_ylim(-30,30)
+            ax[0].set_xlim(-30,30)
+            ax[0].set_aspect('equal')
+            ax[1].set_ylim(-30,30)
+            ax[1].set_xlim(-30,30)
+            ax[1].set_aspect('equal')
+            ax[0].set_title('gt')
+            ax[1].set_title('pred')
+            title = f'{(val_ls.index(token)):04}_{token}'
+            fig.suptitle(title)
+            fig.savefig(f'tmp/{title}.png')
+            plt.close(fig)

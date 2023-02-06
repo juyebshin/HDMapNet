@@ -23,7 +23,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
     color_map[0] = np.array([0, 0, 0])
     colors_plt = ['tab:red', 'tab:blue', 'tab:green']
 
-    dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
+    dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=True)
     gt_path = os.path.join(dataroot, 'samples', 'GT')
     if not os.path.exists(gt_path):
         os.mkdir(gt_path)
@@ -42,9 +42,9 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
 
         if not os.path.exists(base_path):
             os.mkdir(base_path)
-        plt.figure(figsize=(4, 2))
+        plt.figure(figsize=(4, 4))
         plt.xlim(-30, 30)
-        plt.ylim(-15, 15)
+        plt.ylim(51)
         plt.axis('off')
         num_vectors = 0
         for vector in vectors:
@@ -61,14 +61,14 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'MAP.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
         plt.close()
 
         major_xticks = np.linspace(-30, 30, 51)
-        major_yticks = np.linspace(-15, 15, 26)
-        plt.figure(figsize=(4, 2))
+        major_yticks = np.linspace(-30, 30, 51)
+        plt.figure(figsize=(4, 4))
         plt.xlim(-30, 30)
-        plt.ylim(-15, 15)
+        plt.ylim(-30, 30)
         plt.axis('off')
         plt.xticks(major_xticks, fontsize=2)
         plt.yticks(major_yticks, fontsize=2)
@@ -84,7 +84,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'VERTEX.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
         plt.close()
 
         # for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
@@ -121,10 +121,10 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('dataroot', nargs='?', type=str, default='./nuscenes/')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
-    parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
+    parser.add_argument("--ybound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--sample_dist", type=float, default=1.5)
     args = parser.parse_args()
 

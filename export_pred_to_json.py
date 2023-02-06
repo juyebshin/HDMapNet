@@ -110,7 +110,7 @@ def main(args):
     model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
-    export_vectormapnet_to_json(model, train_loader, args.angle_class, args)
+    export_vectormapnet_to_json(model, val_loader, args.angle_class, args)
 
 
 if __name__ == '__main__':
