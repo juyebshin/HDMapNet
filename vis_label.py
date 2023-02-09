@@ -11,7 +11,7 @@ from data.utils import get_proj_mat, perspective
 from data.image import denormalize_img
 
 
-def vis_label(dataroot, version, xbound, ybound, sample_dist):
+def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
     data_conf = {
         'image_size': (900, 1600),
         'xbound': xbound,
@@ -23,7 +23,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
     color_map[0] = np.array([0, 0, 0])
     colors_plt = ['tab:red', 'tab:blue', 'tab:green']
 
-    dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
+    dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=is_train)
     gt_path = os.path.join(dataroot, 'samples', 'GT')
     if not os.path.exists(gt_path):
         os.mkdir(gt_path)
@@ -63,7 +63,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'MAP.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
         plt.close()
 
         major_xticks = np.linspace(-30, 30, 51)
@@ -86,7 +86,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'VERTEX.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
         plt.close()
 
         # for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
@@ -115,7 +115,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist):
         #     plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
         #     plt.close()
     
-    with open('num_vectors_train.csv', 'w') as f:
+    with open('num_vectors_train_class.csv', 'w') as f:
         print('saving number of vectors list to csv...')
         write = csv.writer(f)
         num_vectors_list.insert(0, ['Frame', 'Divider', 'Ped. Crossing', 'Boundary'])
@@ -129,6 +129,7 @@ if __name__ == '__main__':
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--sample_dist", type=float, default=1.5)
+    parser.add_argument("--is_train", action='store_true')
     args = parser.parse_args()
 
-    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.sample_dist)
+    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.sample_dist, args.is_train)
