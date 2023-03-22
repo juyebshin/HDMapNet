@@ -27,7 +27,7 @@ def redundant_filter(mask, kernel=25):
     return mask
 
 
-def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_threshold, cell_size):
+def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_threshold, cell_size, sample_dist):
     data_conf = {
         'image_size': (900, 1600),
         'xbound': xbound,
@@ -36,6 +36,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         'angle_class': angle_class,
         'dist_threshold': dist_threshold,
         'cell_size': cell_size,
+        'sample_dist': sample_dist,
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
@@ -48,7 +49,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         [255, 0, 0] # contour
         ])
 
-    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=True)
+    dataset = HDMapNetSemanticDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=False)
     gt_path = os.path.join(dataroot, 'samples', 'semanticGT')
 
     if not os.path.exists(gt_path):
@@ -76,7 +77,13 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
         semantic_color_mask = semantic_color[semantic_mask].astype('uint8')
         # 200, 400, 3
         # semantic_mask = np.moveaxis(semantic_mask, 0, -1)
-        Image.fromarray(semantic_color_mask).save(semantic_path)
+        # Image.fromarray(semantic_color_mask).save(semantic_path)
+        plt.figure()
+        plt.imshow(semantic_color_mask)
+        plt.axis('off')
+
+        plt.savefig(semantic_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        plt.close()
 
         instance_mask = instance_mask.int().numpy()
         instance_color_mask = color_map[instance_mask].astype('uint8')
@@ -146,7 +153,7 @@ def vis_label(dataroot, version, xbound, ybound, thickness, angle_class, dist_th
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('dataroot', nargs='?', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
@@ -154,6 +161,7 @@ if __name__ == '__main__':
     parser.add_argument("--angle_class", type=int, default=36)
     parser.add_argument("--dist_threshold", type=float, default=10.0)
     parser.add_argument("--cell_size", type=int, default=8)
+    parser.add_argument("--sample_dist", type=float, default=1.5)
     args = parser.parse_args()
 
-    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold, args.cell_size)
+    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.thickness, args.angle_class, args.dist_threshold, args.cell_size, args.sample_dist)
