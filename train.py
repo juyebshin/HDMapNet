@@ -72,8 +72,10 @@ def train(args):
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
     device = torch.device(args.device)
-    BatchNorm1d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm1d
-    BatchNorm2d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm2d
+    # BatchNorm1d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm1d
+    # BatchNorm2d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm2d
+    BatchNorm1d = torch.nn.BatchNorm1d
+    BatchNorm2d = torch.nn.BatchNorm2d
     norm_layer_dict = {'1d': BatchNorm1d, '2d': BatchNorm2d}
     
     if args.distributed:
