@@ -6,8 +6,6 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 import numpy as np
 
-from .hdmapnet import HDMapNet
-from .gcn import GCN
 
 def MLP(channels: list, do_bn=True, norm_layer=nn.BatchNorm1d):
     """ MLP """
@@ -277,172 +275,172 @@ class GraphEncoder(nn.Module):
         input = embedding.transpose(1, 2) # [b, C, N] C = 3 for vertices, C = 64 for dt
         return self.encoder(input) # [b, 256, N]
 
-class VectorMapNet(nn.Module):
-    def __init__(self, data_conf, norm_layer_dict, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, refine=False) -> None:
-        super(VectorMapNet, self).__init__()
+# class VectorMapNet(nn.Module):
+#     def __init__(self, data_conf, norm_layer_dict, instance_seg=False, embedded_dim=16, direction_pred=False, direction_dim=36, lidar=False, distance_reg=True, refine=False) -> None:
+#         super(VectorMapNet, self).__init__()
 
-        self.num_classes = data_conf['num_channels'] # 4
-        self.cell_size = data_conf['cell_size']
-        self.dist_threshold = data_conf['dist_threshold']
-        self.distance_reg = distance_reg
-        self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
-        self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
-        self.resolution = data_conf['xbound'][-1] # 0.15
-        self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
-        self.max_vertices = data_conf['num_vectors'] # 300
-        self.feature_dim = data_conf['feature_dim'] # 256
-        self.pos_freq = data_conf['pos_freq']
-        self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
-        self.gnn_layers = data_conf['gnn_layers']
-        self.refine = refine
+#         self.num_classes = data_conf['num_channels'] # 4
+#         self.cell_size = data_conf['cell_size']
+#         self.dist_threshold = data_conf['dist_threshold']
+#         self.distance_reg = distance_reg
+#         self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
+#         self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
+#         self.resolution = data_conf['xbound'][-1] # 0.15
+#         self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
+#         self.max_vertices = data_conf['num_vectors'] # 300
+#         self.feature_dim = data_conf['feature_dim'] # 256
+#         self.pos_freq = data_conf['pos_freq']
+#         self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
+#         self.gnn_layers = data_conf['gnn_layers']
+#         self.refine = refine
 
-        self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
+#         self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
 
-        # Intermediate representations: vertices, distance transform
-        self.bev_backbone = HDMapNet(data_conf, norm_layer_dict['2d'], False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
+#         # Intermediate representations: vertices, distance transform
+#         self.bev_backbone = HDMapNet(data_conf, norm_layer_dict['2d'], False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
 
-        # Positional encoding
-        self.pe_fn, self.pe_dim = get_embedder(data_conf['pos_freq'])
+#         # Positional encoding
+#         self.pe_fn, self.pe_dim = get_embedder(data_conf['pos_freq'])
         
-        # Graph neural network
-        # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
-        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
-        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
-        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256 for visual descriptor
-        # if distance_reg:
-        #     self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
-            # self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim+3, 64, 128, 256], norm_layer_dict['1d']) # temp
-        self.gnn = AttentionalGNN(self.feature_dim, ['self']*self.gnn_layers, norm_layer_dict['1d'])
-        self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
+#         # Graph neural network
+#         # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
+#         self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer_dict['1d']) # 43 -> 64 -> 128 -> 256 -> 256
+#         embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
+#         self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256 for visual descriptor
+#         # if distance_reg:
+#         #     self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
+#             # self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim+3, 64, 128, 256], norm_layer_dict['1d']) # temp
+#         self.gnn = AttentionalGNN(self.feature_dim, ['self']*self.gnn_layers, norm_layer_dict['1d'])
+#         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
-        bin_score = nn.Parameter(torch.tensor(1.))
-        self.register_parameter('bin_score', bin_score)
+#         bin_score = nn.Parameter(torch.tensor(1.))
+#         self.register_parameter('bin_score', bin_score)
 
-        # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
-        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
-        if self.refine:
-            self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
+#         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
+#         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
+#         if self.refine:
+#             self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
-    def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
-        """ semantic, instance, direction are not used
-        @ vertex: (b, 65, 25, 50)
-        @ distance: (b, 3, 200, 400)
-        """
+#     def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+#         """ semantic, instance, direction are not used
+#         @ vertex: (b, 65, 25, 50)
+#         @ distance: (b, 3, 200, 400)
+#         """
         
-        semantic, distance, vertex, instance, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
+#         semantic, distance, vertex, instance, direction = self.bev_backbone(img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll)
 
-        # Compute the dense vertices scores (heatmap)
-        scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        scores = scores[:, :-1] # b, 64, 25, 50
-        b, _, h, w = scores.shape # b, 64, 25, 50
-        mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
-        scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
-        scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
-        scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
-        score_shape = scores_max.shape # b, 200, 400
+#         # Compute the dense vertices scores (heatmap)
+#         scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
+#         scores = scores[:, :-1] # b, 64, 25, 50
+#         b, _, h, w = scores.shape # b, 64, 25, 50
+#         mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
+#         scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
+#         scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
+#         scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+#         scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+#         scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
+#         score_shape = scores_max.shape # b, 200, 400
 
-        # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
-        # scores[scores < self.vertex_threshold] = 0.0
-        # scores_max, max_idx = scores.max(-1) # b, 25, 50, 1
-        # vertices_cell = [torch.nonzero(vc.squeeze(-1)) for vc in scores_max] # list of length b, [N, 2(row, col)] tensor, (row, col) within (25, 50)
+#         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
+#         # scores[scores < self.vertex_threshold] = 0.0
+#         # scores_max, max_idx = scores.max(-1) # b, 25, 50, 1
+#         # vertices_cell = [torch.nonzero(vc.squeeze(-1)) for vc in scores_max] # list of length b, [N, 2(row, col)] tensor, (row, col) within (25, 50)
 
-        # [1] Extract vertices
-        # onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
-        # onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
-        # vertices_cell = [torch.nonzero(vc) for vc in onehot_max] #
-        # onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        # onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        # vertices: [N, 2] in XY vehicle space
-        # scores: [N] vertex confidences
-        # vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
-        # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+#         # [1] Extract vertices
+#         # onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
+#         # onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
+#         # vertices_cell = [torch.nonzero(vc) for vc in onehot_max] #
+#         # onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+#         # onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+#         # vertices: [N, 2] in XY vehicle space
+#         # scores: [N] vertex confidences
+#         # vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
+#         # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
 
-        # [2] Extract vertices using NMS
-        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores_max] # list of length b, [N, 2(row, col)] tensor
-        scores = [s[tuple(v.t())] for s, v in zip(scores_max, vertices)] # list of length b, [N] tensor
-        vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
+#         # [2] Extract vertices using NMS
+#         vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores_max] # list of length b, [N, 2(row, col)] tensor
+#         scores = [s[tuple(v.t())] for s, v in zip(scores_max, vertices)] # list of length b, [N] tensor
+#         vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
 
-        # Extract distance transform
-        if self.distance_reg:
-            dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
-        else:
-            # distance: segmentation [b, 3, 200, 400]
-            # distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
-            # dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
+#         # Extract distance transform
+#         if self.distance_reg:
+#             dt_embedding = sample_dt(vertices_cell, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
+#         else:
+#             # distance: segmentation [b, 3, 200, 400]
+#             # distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
+#             # dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
 
-            # distance: feature [b, 256, 100, 200]
-            distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
-            dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
+#             # distance: feature [b, 256, 100, 200]
+#             distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
+#             dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
 
-        if self.max_vertices >= 0:
-            vertices, scores, dt_embedding, masks = list(zip(*[
-                top_k_vertices(v, s, d, self.max_vertices)
-                for v, s, d in zip(vertices, scores, dt_embedding)
-            ]))
+#         if self.max_vertices >= 0:
+#             vertices, scores, dt_embedding, masks = list(zip(*[
+#                 top_k_vertices(v, s, d, self.max_vertices)
+#                 for v, s, d in zip(vertices, scores, dt_embedding)
+#             ]))
 
-        # Convert (h, w) to (x, y), normalized
-        # v: [N, 2]
-        vertices_norm = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
+#         # Convert (h, w) to (x, y), normalized
+#         # v: [N, 2]
+#         vertices_norm = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
         
-        # Vertices in pixel coordinate
-        vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x, y
+#         # Vertices in pixel coordinate
+#         vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x, y
 
-        # Positional embedding (x, y, c)
-        pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
-        pos_embedding = torch.stack(pos_embedding) # [b, N, pe_dim+1]
+#         # Positional embedding (x, y, c)
+#         pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
+#         pos_embedding = torch.stack(pos_embedding) # [b, N, pe_dim+1]
 
-        # dt_embedding = [torch.cat((d, v, s.unsqueeze(1)), dim=1) for d, v, s in zip(dt_embedding, vertices_norm, scores)] # temp
-        dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
-        masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
+#         # dt_embedding = [torch.cat((d, v, s.unsqueeze(1)), dim=1) for d, v, s in zip(dt_embedding, vertices_norm, scores)] # temp
+#         dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
+#         masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
 
-        # graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
-        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # for visual descriptor
-        # graph_embedding = self.dtenc(dt_embedding) # temp
-        # masks = masks.transpose(1, 2) # [b, 1, N]
-        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
-        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
-        if self.refine:
-            offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
-        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
+#         # graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
+#         graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # for visual descriptor
+#         # graph_embedding = self.dtenc(dt_embedding) # temp
+#         # masks = masks.transpose(1, 2) # [b, 1, N]
+#         graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
+#         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
+#         if self.refine:
+#             offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
+#         graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
-        # Adjacency matrix score as inner product of all nodes
-        matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
-        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
+#         # Adjacency matrix score as inner product of all nodes
+#         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
+#         matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
         
-        # Don't care self matches
-        b, m, n = matches.shape
-        diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
-        matches[diag_mask] = -1e9
+#         # Don't care self matches
+#         b, m, n = matches.shape
+#         diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
+#         matches[diag_mask] = -1e9
 
-        # Don't care bin matches
-        match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [B, N, N]
-        matches = matches.masked_fill(match_mask == 0, -1e9)
+#         # Don't care bin matches
+#         match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [B, N, N]
+#         matches = matches.masked_fill(match_mask == 0, -1e9)
         
-        # Matching layer
-        if self.sinkhorn_iters > 0:
-            matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
-        else:
-            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-            matches = torch.cat( # [b, N+1, N+1]
-            [
-                torch.cat([matches, bins0], -1), # [b, N, N+1]
-                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-            ], 1)
-            matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
-        # matches.exp() should be probability
+#         # Matching layer
+#         if self.sinkhorn_iters > 0:
+#             matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
+#         else:
+#             bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
+#             bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
+#             alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+#             matches = torch.cat( # [b, N+1, N+1]
+#             [
+#                 torch.cat([matches, bins0], -1), # [b, N, N+1]
+#                 torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+#             ], 1)
+#             matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
+#         # matches.exp() should be probability
 
-        # Refinement offset in pixel coordinate
-        if self.refine:
-            _, h, w = score_shape
-            offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
-            vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
+#         # Refinement offset in pixel coordinate
+#         if self.refine:
+#             _, h, w = score_shape
+#             offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
+#             vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
 
-        # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
+#         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 
-        # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
+#         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks
+#         return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks

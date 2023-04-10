@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from data.utils import gen_dx_bx
-from .base import CamEncode, BevEncode
+from .base import CamEncode, BevEncode, InstaGraM
 
 
 def cumsum_trick(x, geom_feats, ranks):
@@ -52,14 +52,13 @@ class QuickCumsum(torch.autograd.Function):
 
 
 class LiftSplat(nn.Module):
-    def __init__(self, grid_conf, data_aug_conf, outC, instance_seg, embedded_dim):
+    def __init__(self, data_conf, instance_seg, embedded_dim, segmentation, direction_pred, distance_reg, vertex_pred, norm_layer_dict, refine=False):
         super(LiftSplat, self).__init__()
-        self.grid_conf = grid_conf
-        self.data_aug_conf = data_aug_conf
+        self.data_conf = data_conf
 
-        dx, bx, nx = gen_dx_bx(self.grid_conf['xbound'],
-                                              self.grid_conf['ybound'],
-                                              self.grid_conf['zbound'],
+        dx, bx, nx = gen_dx_bx(self.data_conf['xbound'],
+                                              self.data_conf['ybound'],
+                                              self.data_conf['zbound'],
                                               )
         self.dx = nn.Parameter(dx, requires_grad=False)
         self.bx = nn.Parameter(bx, requires_grad=False)
@@ -70,17 +69,18 @@ class LiftSplat(nn.Module):
         self.frustum = self.create_frustum()
         # D x H/downsample x D/downsample x 3
         self.D, _, _, _ = self.frustum.shape
-        self.camencode = CamEncode(self.D, self.camC, self.downsample)
-        self.bevencode = BevEncode(inC=self.camC, outC=outC, instance_seg=instance_seg, embedded_dim=embedded_dim)
+        self.camencode = CamEncode(self.D, self.camC, self.downsample, norm_layer_dict['2d'])
+        self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_dim=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
+        self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
 
         # toggle using QuickCumsum vs. autograd
         self.use_quickcumsum = True
 
     def create_frustum(self):
         # make grid in image plane
-        ogfH, ogfW = self.data_aug_conf['final_dim']
+        ogfH, ogfW = self.data_conf['final_dim']
         fH, fW = ogfH // self.downsample, ogfW // self.downsample
-        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        ds = torch.arange(*self.data_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         D, _, _ = ds.shape
         xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)
         ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)
@@ -180,4 +180,4 @@ class LiftSplat(nn.Module):
     def forward(self, points, points_mask, x, rots, trans, intrins, post_rots, post_trans, translation, yaw_pitch_roll):
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
         x = self.bevencode(x)
-        return x
+        return self.head(x)
