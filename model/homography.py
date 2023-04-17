@@ -163,7 +163,7 @@ def plane_grid(xbound, ybound, zs, yaws, rolls, pitchs, cuda=True):
         x = x.cuda()
         y = y.cuda()
 
-    y, x = torch.meshgrid(x, y)
+    y, x = torch.meshgrid(x, y) # , indexing='xy'
     # y, x = torch.meshgrid((x, y))
 
     #      -60                  x                    60

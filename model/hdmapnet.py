@@ -52,7 +52,7 @@ class HDMapNet(nn.Module):
         final_H, final_W = nx[1].item(), nx[0].item()
 
         # EfficientNet-B0
-        self.camencode = CamEncode(self.camC, data_conf['backbone'], norm_layer_dict['2d'])
+        self.camencode = CamEncode(self.camC, backbone=data_conf['backbone'], norm_layer=norm_layer_dict['2d'])
         fv_size = (data_conf['image_size'][0]//self.downsample, data_conf['image_size'][1]//self.downsample)
         # fv_size: (8, 22)
         bv_size = (final_H//5, final_W//5)

@@ -6,6 +6,112 @@ from efficientnet_pytorch import EfficientNet
 from torchvision.models.resnet import resnet18, resnet50
 from .graphmap import *
 
+import data.utils as utils
+
+# Precomputed aliases
+MODELS = {
+    'efficientnet-b0': [
+        ('reduction_1', (0, 2)),
+        ('reduction_2', (2, 4)),
+        ('reduction_3', (4, 6)),
+        ('reduction_4', (6, 12))
+    ],
+    'efficientnet-b4': [
+        ('reduction_1', (0, 3)),
+        ('reduction_2', (3, 7)),
+        ('reduction_3', (7, 11)),
+        ('reduction_4', (11, 23)),
+    ]
+}
+
+
+class EfficientNetExtractor(torch.nn.Module):
+    """
+    Helper wrapper that uses torch.utils.checkpoint.checkpoint to save memory while training.
+
+    This runs a fake input with shape (1, 3, input_height, input_width)
+    to give the shapes of the features requested.
+
+    Sample usage:
+        backbone = EfficientNetExtractor(224, 480, ['reduction_2', 'reduction_4'])
+
+        # [[1, 56, 28, 60], [1, 272, 7, 15]]
+        backbone.output_shapes
+
+        # [f1, f2], where f1 is 'reduction_1', which is shape [b, d, 128, 128]
+        backbone(x)
+    """
+    def __init__(self, layer_names, image_height, image_width, model_name='efficientnet-b4'):
+        super().__init__()
+
+        assert model_name in MODELS
+        assert all(k in [k for k, v in MODELS[model_name]] for k in layer_names)
+
+        idx_max = -1
+        layer_to_idx = {}
+
+        # Find which blocks to return
+        for i, (layer_name, _) in enumerate(MODELS[model_name]):
+            if layer_name in layer_names:
+                idx_max = max(idx_max, i)
+                layer_to_idx[layer_name] = i
+
+        # We can set memory efficient swish to false since we're using checkpointing
+        net = EfficientNet.from_pretrained(model_name)
+        # net.set_swish(False)
+
+        drop = net._global_params.drop_connect_rate / len(net._blocks)
+        blocks = [nn.Sequential(net._conv_stem, net._bn0, net._swish)]
+
+        # Only run needed blocks
+        for idx in range(idx_max):
+            l, r = MODELS[model_name][idx][1]
+
+            block = SequentialWithArgs(*[(net._blocks[i], [i * drop]) for i in range(l, r)])
+            blocks.append(block)
+
+        self.layers = nn.Sequential(*blocks)
+        self.layer_names = layer_names
+        self.idx_pick = [layer_to_idx[l] for l in layer_names]
+
+        # Pass a dummy tensor to precompute intermediate shapes
+        dummy = torch.rand(1, 3, image_height, image_width)
+        output_shapes = [x.shape for x in self(dummy)]
+
+        self.output_shapes = output_shapes
+
+    def forward(self, x):
+        if self.training:
+            x = x.requires_grad_(True) # [B*N, 3, 128, 352]
+
+        result = [] # [B*N, 48, 64, 176] -> [B*N, 32, 32, 88] -> [B*N, 56, 16, 44] -> [B*N, 112, 8, 22]
+
+        for layer in self.layers:
+            # if self.training:
+            #     x = torch.utils.checkpoint.checkpoint(layer, x)
+            # else:
+            #     x = layer(x)
+
+            x = layer(x)
+            result.append(x)
+
+        return [result[i] for i in self.idx_pick]
+
+
+class SequentialWithArgs(nn.Sequential):
+    def __init__(self, *layers_args):
+        layers = [layer for layer, args in layers_args]
+        args = [args for layer, args in layers_args]
+
+        super().__init__(*layers)
+
+        self.args = args
+
+    def forward(self, x):
+        for l, a in zip(self, self.args):
+            x = l(x, *a)
+
+        return x
 
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels, scale_factor=2, norm_layer=nn.BatchNorm2d):
@@ -51,9 +157,10 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
+    def __init__(self, C, D=None, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
         super(CamEncode, self).__init__()
         self.C = C
+        self.D = D
         self.backbone = backbone
 
         if 'efficientnet' in backbone:
@@ -79,6 +186,8 @@ class CamEncode(nn.Module):
             raise NotImplementedError
 
         self.up1 = Up(channel, self.C, norm_layer=norm_layer) # 320+112
+        if D is not None:
+            self.depthnet = nn.Conv2d(self.C, D + self.C, kernel_size=1, padding=0)
 
         """
         b0
@@ -119,7 +228,7 @@ class CamEncode(nn.Module):
         """
 
     def get_eff_depth(self, x):
-        # x: B*N, C, H, W
+        # x: B*N, C, H, W [128, 352]
         # adapted from https://github.com/lukemelas/EfficientNet-PyTorch/blob/master/efficientnet_pytorch/model.py#L231
         endpoints = dict()
 
@@ -158,14 +267,32 @@ class CamEncode(nn.Module):
 
         x = self.up1(x4, x3)
         return x
-
-    def forward(self, x):
+    
+    def get_depth_dist(self, x, eps=1e-20):
+        return x.softmax(dim=1)
+    
+    def get_depth_feat(self, x):
         if 'efficientnet' in self.backbone:
-            return self.get_eff_depth(x)
+            x = self.get_eff_depth(x)
         elif 'resnet' in self.backbone:
-            return self.get_resnet_depth(x)
+            x = self.get_resnet_depth(x)
         else:
             raise NotImplementedError
+
+        if self.D is not None:
+            x = self.depthnet(x) # B*N, 41+64, 8, 22
+
+            depth = self.get_depth_dist(x[:, :self.D]) # B*N, 41, 8, 22
+            new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
+
+            return new_x # [B*N, 64, 41, 8, 22]
+        else:
+            return x
+
+    def forward(self, x):
+        x = self.get_depth_feat(x)
+
+        return x
 
 
 class BevEncode(nn.Module):

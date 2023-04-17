@@ -157,8 +157,8 @@ class HDMapNetDataset(Dataset):
             imgs.append(img)
 
             sens = self.nusc.get('calibrated_sensor', samp['calibrated_sensor_token'])
-            trans.append(torch.Tensor(sens['translation']))
-            rots.append(torch.Tensor(Quaternion(sens['rotation']).rotation_matrix))
+            trans.append(torch.Tensor(sens['translation'])) # tensor.Size([3])
+            rots.append(torch.Tensor(Quaternion(sens['rotation']).rotation_matrix)) # [3, 3]
             intrins.append(torch.Tensor(sens['camera_intrinsic']))
         return torch.stack(imgs), torch.stack(trans), torch.stack(rots), torch.stack(intrins), torch.stack(post_trans), torch.stack(post_rots)
 
