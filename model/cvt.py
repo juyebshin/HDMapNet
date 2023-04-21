@@ -33,7 +33,7 @@ def get_view_matrix(h=200, w=200, h_meters=100.0, w_meters=100.0, offset=0.0):
 
     return [
         [ sw,  0.,          w/2.],
-        [ 0.,  sh, h*offset+h/2.],
+        [ 0.,  sh, h*offset+h/2.], # todo
         [ 0.,  0.,            1.]
     ]
 
@@ -100,8 +100,8 @@ class BEVEmbedding(nn.Module):
 
         # bev coordinates
         grid = generate_grid(h, w).squeeze(0) # 3 h w
-        grid[0] = bev_width * grid[0]
-        grid[1] = bev_height * grid[1]
+        grid[0] = bev_width * grid[0] # 0 ~ 50
+        grid[1] = bev_height * grid[1] # 0 ~ 25
 
         # map from bev coordinates to ego frame
         V = get_view_matrix(bev_height, bev_width, h_meters, w_meters, offset)  # 3 3
@@ -201,8 +201,8 @@ class CrossViewAttention(nn.Module):
 
         # 1 1 3 h w
         image_plane = generate_grid(feat_height, feat_width)[None]
-        image_plane[:, :, 0] *= image_width
-        image_plane[:, :, 1] *= image_height
+        image_plane[:, :, 0] *= image_width # 0 ~ 352
+        image_plane[:, :, 1] *= image_height # 0 ~ 128
 
         self.register_buffer('image_plane', image_plane, persistent=False)
 
@@ -235,8 +235,8 @@ class CrossViewAttention(nn.Module):
         E_inv: torch.FloatTensor,
     ):
         """
-        x: (b, c, H, W)
-        feature: (b, n, dim_in, h, w)
+        x: (b, c, H, W) : learned bev feature
+        feature: (b, n, dim_in, h, w) : image feature
         I_inv: (b, n, 3, 3)
         E_inv: (b, n, 4, 4)
 
@@ -411,7 +411,7 @@ class CrossViewTransformer(nn.Module):
         super().__init__()
 
         dim = 128
-        downsample = 16
+        self.downsample = 16
         self.data_conf = data_conf
 
         dx, bx, nx = gen_dx_bx(self.data_conf['xbound'],
@@ -454,7 +454,12 @@ class CrossViewTransformer(nn.Module):
 
     def get_Ks_RTs_and_post_RTs(self, intrins, rots, trans, post_rots, post_trans):
         B, N, _, _ = intrins.shape
-        Ks = torch.eye(4, device=intrins.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
+        Ks = torch.eye(3, device=intrins.device).view(1, 1, 3, 3).repeat(B, N, 1, 1)
+        Ks = Ks @ intrins
+        Ks[:, :, 0, 0] *= post_rots[:, :, 0, 0] # fx
+        Ks[:, :, 0, 2] *= post_rots[:, :, 0, 0] # u0
+        Ks[:, :, 1, 1] *= post_rots[:, :, 1, 1] # fy
+        Ks[:, :, 1, 2] *= post_rots[:, :, 1, 1] # v0
 
         Rs = torch.eye(4, device=rots.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
         Rs[:, :, :3, :3] = rots.transpose(-1, -2).contiguous()
@@ -462,18 +467,14 @@ class CrossViewTransformer(nn.Module):
         Ts[:, :, :3, 3] = -trans
         RTs = Rs @ Ts
 
-        post_Rs = torch.eye(4, device=post_rots.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
-        post_Rs[:, :, :3, :3] = post_rots.transpose(-1, -2).contiguous()
-        post_Ts = torch.eye(4, device=post_trans.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
-        post_Ts[:, :, :3, 3] = -post_trans
-        post_RTs = post_Rs @ post_Ts
+        post_RTs = torch.eye(4, device=post_rots.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
+        post_RTs[:, :, :3, :3] = post_rots
+        post_RTs[:, :, :3, 3] = post_trans
 
         return Ks, RTs, post_RTs
     
     def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
-        Ks, RTs, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
-        intrinsics = post_RTs[:, :, :-1, :-1] @ intrins
-        extrinsics = RTs
+        intrinsics, extrinsics, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
         x = self.encoder(x, intrinsics, extrinsics) # [B, 128?, 25, 50]
         y = self.decoder(x) # [b, 64, 200, 400]
         x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(y)

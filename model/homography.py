@@ -61,7 +61,7 @@ def perspective(cam_coords, proj_mat, h, w, extrinsic, offset=None):
     eps = 1e-7
     # proj_mat: batch*6, 4, 4
     # cam_coords: 4, 20000
-    pix_coords = proj_mat @ cam_coords # batch*6, 4(x, y, z=0, 1), 20000
+    pix_coords = proj_mat @ cam_coords # batch*6, 4(x, y, z=0, 1), 20000 : K * Rt * x(I)
     # pix_coords: b*6, 4, 20000
 
     N, _, _ = pix_coords.shape
@@ -319,7 +319,7 @@ class IPM(nn.Module):
             warped_topdown[warped_mask] = warped_fv_images[:, CAM_BL][warped_mask] + warped_fv_images[:, CAM_BR][warped_mask]
             return warped_topdown.permute(0, 3, 1, 2).contiguous()
         else:
-            warped_topdown, _ = warped_fv_images.max(1) # maximum for overlapping over cameras
+            warped_topdown, _ = warped_fv_images.max(1) # maximum for overlapping over cameras -> b, 100, 200, 64
             warped_topdown = warped_topdown.permute(0, 3, 1, 2).contiguous() # b, 64, 100, 200
             warped_topdown = warped_topdown.view(B, C, self.h, self.w)
             return warped_topdown # b, 64, 100, 200
