@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from data.utils import gen_dx_bx
-from .base import CamEncode, BevEncode
+from .base import CamEncode, BevEncode, InstaGraM
 
 
 def cumsum_trick(x, geom_feats, ranks):
@@ -52,14 +52,13 @@ class QuickCumsum(torch.autograd.Function):
 
 
 class LiftSplat(nn.Module):
-    def __init__(self, grid_conf, data_aug_conf, outC, instance_seg, embedded_dim):
+    def __init__(self, data_conf, segmentation, instance_seg, embedded_dim, direction_pred, distance_reg, vertex_pred, norm_layer_dict, refine=False):
         super(LiftSplat, self).__init__()
-        self.grid_conf = grid_conf
-        self.data_aug_conf = data_aug_conf
+        self.data_conf = data_conf
 
-        dx, bx, nx = gen_dx_bx(self.grid_conf['xbound'],
-                                              self.grid_conf['ybound'],
-                                              self.grid_conf['zbound'],
+        dx, bx, nx = gen_dx_bx(self.data_conf['xbound'],
+                                              self.data_conf['ybound'],
+                                              self.data_conf['zbound'],
                                               )
         self.dx = nn.Parameter(dx, requires_grad=False)
         self.bx = nn.Parameter(bx, requires_grad=False)
@@ -70,17 +69,18 @@ class LiftSplat(nn.Module):
         self.frustum = self.create_frustum()
         # D x H/downsample x D/downsample x 3
         self.D, _, _, _ = self.frustum.shape
-        self.camencode = CamEncode(self.D, self.camC, self.downsample)
-        self.bevencode = BevEncode(inC=self.camC, outC=outC, instance_seg=instance_seg, embedded_dim=embedded_dim)
+        self.camencode = CamEncode(self.camC, self.D, data_conf['backbone'], norm_layer_dict['2d']) # self.downsample, 
+        self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
+        self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
 
         # toggle using QuickCumsum vs. autograd
         self.use_quickcumsum = True
 
     def create_frustum(self):
         # make grid in image plane
-        ogfH, ogfW = self.data_aug_conf['final_dim']
+        ogfH, ogfW = self.data_conf['image_size']
         fH, fW = ogfH // self.downsample, ogfW // self.downsample
-        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        ds = torch.arange(*self.data_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         D, _, _ = ds.shape
         xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)
         ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)
@@ -98,7 +98,7 @@ class LiftSplat(nn.Module):
 
         # *undo* post-transformation
         # B x N x D x H x W x 3
-        points = self.frustum - post_trans.view(B, N, 1, 1, 1, 3)
+        points = self.frustum - post_trans.view(B, N, 1, 1, 1, 3) # 4, 6, 41, 8, 22, 3
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3).matmul(points.unsqueeze(-1))
 
         # cam_to_ego
@@ -109,7 +109,7 @@ class LiftSplat(nn.Module):
         points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
         points += trans.view(B, N, 1, 1, 1, 3)
 
-        return points
+        return points # B, N(=6), D(=41), H(=8), W(=22), 3
 
     def get_cam_feats(self, x):
         """Return B x N x D x H/downsample x W/downsample x C
@@ -117,14 +117,14 @@ class LiftSplat(nn.Module):
         B, N, C, imH, imW = x.shape
 
         x = x.view(B*N, C, imH, imW)
-        x = self.camencode(x)
-        x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample)
+        x = self.camencode(x) # B*N, C*D, h, w
+        x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample) # B, N, C, D, h, w
         x = x.permute(0, 1, 3, 4, 5, 2)
 
-        return x
+        return x # B, N, D(=41), h, w, C(=64)
 
     def voxel_pooling(self, geom_feats, x):
-        B, N, D, H, W, C = x.shape
+        B, N, D, H, W, C = x.shape # B, N(=6), D(=41), h, w, C(=64)
         Nprime = B*N*D*H*W
 
         # flatten x
@@ -165,7 +165,7 @@ class LiftSplat(nn.Module):
         # collapse Z
         final = torch.cat(final.unbind(dim=2), 1)
 
-        return final
+        return final # B, C(=64), Y, X
 
     def get_voxels(self, x, rots, trans, intrins, post_rots, post_trans):
         # B x N x D x H/downsample x W/downsample x 3: (x,y,z) locations (in the ego frame)
@@ -177,7 +177,8 @@ class LiftSplat(nn.Module):
 
         return x
 
-    def forward(self, points, points_mask, x, rots, trans, intrins, post_rots, post_trans, translation, yaw_pitch_roll):
+    def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+        # imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(), post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(), lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda()
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
-        x = self.bevencode(x)
-        return x
+        x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(x)
+        return self.head(x_seg, x_dt, x_vertex, x_embedded, x_direction)

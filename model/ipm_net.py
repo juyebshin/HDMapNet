@@ -3,26 +3,21 @@ from torch import nn
 
 from .homography import IPM, bilinear_sampler
 from .utils import plane_grid_2d, get_rot_2d, cam_to_pixel
-from .base import CamEncode, BevEncode
+from .base import CamEncode, BevEncode, InstaGraM
 
 
 class IPMNet(nn.Module):
-    def __init__(self, xbound, ybound, outC, camC=64, instance_seg=True, embedded_dim=16, cam_encoding=True, bev_encoding=True, z_roll_pitch=False):
+    def __init__(self, data_conf, segmentation, instance_seg, embedded_dim, direction_pred, distance_reg, vertex_pred, norm_layer_dict, refine=False):
         super(IPMNet, self).__init__()
-        self.xbound = xbound
-        self.ybound = ybound
-        self.camC = camC
+        self.xbound = data_conf['xbound']
+        self.ybound = data_conf['ybound']
+        self.camC = 64
         self.downsample = 16
-        if cam_encoding:
-            self.ipm = IPM(xbound, ybound, N=6, C=camC, z_roll_pitch=z_roll_pitch, extrinsic=False)
-        else:
-            self.ipm = IPM(xbound, ybound, N=6, C=camC, visual=True, z_roll_pitch=z_roll_pitch, extrinsic=False)
-        self.cam_encoding = cam_encoding
-        if cam_encoding:
-            self.camencode = CamEncode(camC)
-        self.bev_encoding = bev_encoding
-        if bev_encoding:
-            self.bevencode = BevEncode(inC=camC, outC=outC, instance_seg=instance_seg, embedded_dim=embedded_dim)
+
+        self.ipm = IPM(self.xbound, self.ybound, N=6, C=self.camC, extrinsic=False)
+        self.camencode = CamEncode(self.camC, backbone=data_conf['backbone'], norm_layer=norm_layer_dict['2d'])
+        self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=data_conf['cell_size'])
+        self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
 
     def get_cam_feats(self, x):
         """Return B x N x D x H/downsample x W/downsample x C
@@ -49,28 +44,24 @@ class IPMNet(nn.Module):
         post_RTs[:, :, :3, :3] = post_rots
         post_RTs[:, :, :3, 3] = post_trans
 
-        if self.cam_encoding:
-            scale = torch.Tensor([
-                [1/self.downsample, 0, 0, 0],
-                [0, 1/self.downsample, 0, 0],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1]
-            ]).cuda()
-            post_RTs = scale @ post_RTs
+        scale = torch.Tensor([
+            [1/self.downsample, 0, 0, 0],
+            [0, 1/self.downsample, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ]).cuda()
+        post_RTs = scale @ post_RTs
 
         return Ks, RTs, post_RTs
 
-    def forward(self, points, points_mask, x, rots, trans, intrins, post_rots, post_trans, translation, yaw_pitch_roll):
-        if self.cam_encoding:
-            x = self.get_cam_feats(x)
+    def forward(self, img, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+        x = self.get_cam_feats(img)
 
         Ks, RTs, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
-        topdown = self.ipm(x, Ks, RTs, translation, yaw_pitch_roll, post_RTs)
+        topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs)
+        x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(topdown)
 
-        if self.bev_encoding:
-            return self.bevencode(topdown)
-        else:
-            return topdown
+        return self.head(x_seg, x_dt, x_vertex, x_embedded, x_direction) #  -> InstaGraM
 
 
 class TemporalIPMNet(IPMNet):

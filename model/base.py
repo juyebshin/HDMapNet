@@ -4,6 +4,110 @@ import torch.nn as nn
 
 from efficientnet_pytorch import EfficientNet
 from torchvision.models.resnet import resnet18, resnet50
+from .graphmap import *
+
+import data.utils as utils
+
+# Precomputed aliases
+MODELS = {
+    'efficientnet-b0': [
+        ('reduction_1', (0, 2)),
+        ('reduction_2', (2, 4)),
+        ('reduction_3', (4, 6)),
+        ('reduction_4', (6, 12))
+    ],
+    'efficientnet-b4': [
+        ('reduction_1', (0, 3)),
+        ('reduction_2', (3, 7)),
+        ('reduction_3', (7, 11)),
+        ('reduction_4', (11, 23)),
+    ]
+}
+
+
+class EfficientNetExtractor(torch.nn.Module):
+    """
+    Helper wrapper that uses torch.utils.checkpoint.checkpoint to save memory while training.
+    This runs a fake input with shape (1, 3, input_height, input_width)
+    to give the shapes of the features requested.
+    Sample usage:
+        backbone = EfficientNetExtractor(224, 480, ['reduction_2', 'reduction_4'])
+        # [[1, 56, 28, 60], [1, 272, 7, 15]]
+        backbone.output_shapes
+        # [f1, f2], where f1 is 'reduction_1', which is shape [b, d, 128, 128]
+        backbone(x)
+    """
+    def __init__(self, layer_names, image_height, image_width, model_name='efficientnet-b4'):
+        super().__init__()
+
+        assert model_name in MODELS
+        assert all(k in [k for k, v in MODELS[model_name]] for k in layer_names)
+
+        idx_max = -1
+        layer_to_idx = {}
+
+        # Find which blocks to return
+        for i, (layer_name, _) in enumerate(MODELS[model_name]):
+            if layer_name in layer_names:
+                idx_max = max(idx_max, i)
+                layer_to_idx[layer_name] = i
+
+        # We can set memory efficient swish to false since we're using checkpointing
+        net = EfficientNet.from_pretrained(model_name)
+        # net.set_swish(False)
+
+        drop = net._global_params.drop_connect_rate / len(net._blocks)
+        blocks = [nn.Sequential(net._conv_stem, net._bn0, net._swish)]
+
+        # Only run needed blocks
+        for idx in range(idx_max):
+            l, r = MODELS[model_name][idx][1]
+
+            block = SequentialWithArgs(*[(net._blocks[i], [i * drop]) for i in range(l, r)])
+            blocks.append(block)
+
+        self.layers = nn.Sequential(*blocks)
+        self.layer_names = layer_names
+        self.idx_pick = [layer_to_idx[l] for l in layer_names]
+
+        # Pass a dummy tensor to precompute intermediate shapes
+        dummy = torch.rand(1, 3, image_height, image_width)
+        output_shapes = [x.shape for x in self(dummy)]
+
+        self.output_shapes = output_shapes
+
+    def forward(self, x):
+        if self.training:
+            x = x.requires_grad_(True) # [B*N, 3, 128, 352]
+
+        result = [] # [B*N, 48, 64, 176] -> [B*N, 32, 32, 88] -> [B*N, 56, 16, 44] -> [B*N, 112, 8, 22]
+
+        for layer in self.layers:
+            # if self.training:
+            #     x = torch.utils.checkpoint.checkpoint(layer, x)
+            # else:
+            #     x = layer(x)
+
+            x = layer(x)
+            result.append(x)
+
+        return [result[i] for i in self.idx_pick]
+
+
+class SequentialWithArgs(nn.Sequential):
+    def __init__(self, *layers_args):
+        layers = [layer for layer, args in layers_args]
+        args = [args for layer, args in layers_args]
+
+        super().__init__(*layers)
+
+        self.args = args
+
+    def forward(self, x):
+        for l, a in zip(self, self.args):
+            x = l(x, *a)
+
+        return x
 
 
 class Up(nn.Module):
@@ -50,9 +154,10 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
+    def __init__(self, C, D=None, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
         super(CamEncode, self).__init__()
         self.C = C
+        self.D = D
         self.backbone = backbone
 
         if 'efficientnet' in backbone:
@@ -78,6 +183,8 @@ class CamEncode(nn.Module):
             raise NotImplementedError
 
         self.up1 = Up(channel, self.C, norm_layer=norm_layer) # 320+112
+        if D is not None:
+            self.depthnet = nn.Conv2d(self.C, D + self.C, kernel_size=1, padding=0)
 
         """
         b0
@@ -118,7 +225,7 @@ class CamEncode(nn.Module):
         """
 
     def get_eff_depth(self, x):
-        # x: B*N, C, H, W
+        # x: B*N, C, H, W [128, 352]
         # adapted from https://github.com/lukemelas/EfficientNet-PyTorch/blob/master/efficientnet_pytorch/model.py#L231
         endpoints = dict()
 
@@ -156,16 +263,33 @@ class CamEncode(nn.Module):
         x4 = self.trunk.layer4(x3) # [B*N, 512 or 2048, H/32, W/32]
 
         x = self.up1(x4, x3)
-        return x
+        return x    
 
-    def forward(self, x):
+    def get_depth_dist(self, x, eps=1e-20):
+        return x.softmax(dim=1)
+
+    def get_depth_feat(self, x):
         if 'efficientnet' in self.backbone:
-            return self.get_eff_depth(x)
+            x = self.get_eff_depth(x)
         elif 'resnet' in self.backbone:
-            return self.get_resnet_depth(x)
+            x = self.get_resnet_depth(x)
         else:
             raise NotImplementedError
 
+        if self.D is not None:
+            x = self.depthnet(x) # B*N, 41+64, 8, 22
+
+            depth = self.get_depth_dist(x[:, :self.D]) # B*N, 41, 8, 22
+            new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
+
+            return new_x # [B*N, 64, 41, 8, 22]
+        else:
+            return x
+
+    def forward(self, x):
+        x = self.get_depth_feat(x)
+
+        return x
 
 class BevEncode(nn.Module):
     def __init__(self, inC, outC, norm_layer=nn.BatchNorm2d, segmentation=True, instance_seg=True, embedded_dim=16, direction_pred=True, direction_dim=37, distance_reg=True, vertex_pred=True, cell_size=8):
@@ -313,3 +437,171 @@ class BevEncode(nn.Module):
             x_direction = None
 
         return x_seg, x_dt, x_vertex, x_embedded, x_direction
+
+class InstaGraM(nn.Module):
+    def __init__(self, data_conf, norm_layer, distance_reg=True, refine=False) -> None:
+        super(InstaGraM, self).__init__()
+
+        self.num_classes = data_conf['num_channels'] # 4
+        self.cell_size = data_conf['cell_size']
+        self.dist_threshold = data_conf['dist_threshold']
+        self.distance_reg = distance_reg
+        self.xbound = data_conf['xbound'][:-1] # [-30.0, 30.0]
+        self.ybound = data_conf['ybound'][:-1] # [-15.0, 15.0]
+        self.resolution = data_conf['xbound'][-1] # 0.15
+        self.vertex_threshold = data_conf['vertex_threshold'] # 0.015
+        self.max_vertices = data_conf['num_vectors'] # 300
+        self.feature_dim = data_conf['feature_dim'] # 256
+        self.pos_freq = data_conf['pos_freq']
+        self.sinkhorn_iters = data_conf['sinkhorn_iterations'] # 100 default 0: not using sinkhorn
+        self.gnn_layers = data_conf['gnn_layers']
+        self.refine = refine
+
+        self.center = torch.tensor([self.xbound[0], self.ybound[0]]).cuda() # -30.0, -15.0
+
+        # Intermediate representations: vertices, distance transform
+        # self.bev_backbone = HDMapNet(data_conf, norm_layer_dict['2d'], False, instance_seg, embedded_dim, direction_pred, direction_dim, lidar, distance_reg, vertex_pred=True)
+
+        # Positional encoding
+        self.pe_fn, self.pe_dim = get_embedder(data_conf['pos_freq'])
+
+        # Graph neural network
+        # self.pe_dim = self.pe_dim + 1 with confidence added, here 42+1
+        self.venc = GraphEncoder(self.feature_dim, [self.pe_dim + 1, 64, 128, 256], norm_layer) # 43 -> 64 -> 128 -> 256 -> 256
+        embedding_dim = (self.num_classes-1)*self.cell_size*self.cell_size if distance_reg else 256 # 192 or 256
+        self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer) # 192/256 -> 128 -> 256 for visual descriptor
+        # if distance_reg:
+        #     self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim, 64, 128, 256], norm_layer_dict['1d']) # 192/256 -> 128 -> 256
+            # self.dtenc = GraphEncoder(self.feature_dim, [embedding_dim+3, 64, 128, 256], norm_layer_dict['1d']) # temp
+        self.gnn = AttentionalGNN(self.feature_dim, ['self']*self.gnn_layers, norm_layer)
+        self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
+
+        bin_score = nn.Parameter(torch.tensor(1.))
+        self.register_parameter('bin_score', bin_score)
+
+        # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
+        self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
+        # if self.refine:
+        self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
+
+    def forward(self, semantic, distance, vertex, instance, direction):
+        """ semantic, instance, direction are not used
+        @ vertex: (b, 65, 25, 50)
+        @ distance: (b, 3, 200, 400)
+        """
+
+        # Compute the dense vertices scores (heatmap)
+        scores = torch.sigmoid(vertex) # (b, 3, 25, 50)
+        # scores = scores[:, :-1] # b, 64, 25, 50
+        # b, _, h, w = scores.shape # b, 64, 25, 50
+        # mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
+        # scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
+        # scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
+        # scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        # scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        # scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
+        score_shape = scores.shape # b, 3, 25, 50
+
+        # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
+        # scores[scores < self.vertex_threshold] = 0.0
+        # scores_max, max_idx = scores.max(-1) # b, 25, 50, 1
+        # vertices_cell = [torch.nonzero(vc.squeeze(-1)) for vc in scores_max] # list of length b, [N, 2(row, col)] tensor, (row, col) within (25, 50)
+
+        # [1] Extract vertices
+        # onehot_nodust = onehot[:, :-1] # b, 64, 25, 50
+        # onehot_max, _ = onehot_nodust.max(1) # b, 25, 50
+        # vertices_cell = [torch.nonzero(vc) for vc in onehot_max] #
+        # onehot_nodust = onehot_nodust.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        # onehot_nodust = onehot_nodust.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        # vertices: [N, 2] in XY vehicle space
+        # scores: [N] vertex confidences
+        # vertices = [torch.nonzero(v) for v in onehot_nodust] # list of length b, [N, 2(row, col)] tensor
+        # scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+
+        # [2] Extract vertices using NMS
+        vertices = [torch.nonzero(s > self.vertex_threshold) for s in scores] # list of length b, [N, 3(class, row, col)] tensor
+        scores = [s[tuple(v.t())] for s, v in zip(scores, vertices)] # list of length b, [N] tensor
+        # vertices_cell = [(v / self.cell_size).trunc().long() for v in vertices]
+
+        # Extract distance transform
+        if self.distance_reg:
+            dt_embedding = sample_dt(vertices, F.relu(distance).clamp(max=self.dist_threshold), self.cell_size) # list of [N, 193] tensor
+        else:
+            # distance: segmentation [b, 3, 200, 400]
+            # distance = torch.zeros_like(scores_max).unsqueeze(1).expand(b, self.num_classes-1, scores_max.shape[1], scores_max.shape[2]) # zeros [b, 3, 200, 400]
+            # dt_embedding = sample_dt(vertices_cell, F.sigmoid(distance), self.cell_size) # list of [N, 193] tensor
+
+            # distance: feature [b, 256, 100, 200]
+            distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
+            dt_embedding = sample_feat(vertices, distance_down) # list of [N, 256] tensor
+
+        if self.max_vertices >= 0:
+            vertices, scores, dt_embedding, masks = list(zip(*[
+                top_k_vertices(v[:, 1:], s, d, self.max_vertices) # v[:, 1:]: [N, 2]
+                for v, s, d in zip(vertices, scores, dt_embedding)
+            ]))
+
+        # Convert (h, w) to (x, y), normalized
+        # v: [N, 2]
+        vertices_norm = [normalize_vertices(torch.flip(v, [1]).float(), score_shape) for v in vertices] # list of [N, 2] tensor
+
+        # Vertices in pixel coordinate
+        vertices = torch.stack(vertices).flip([2]) # [b, N, 2] x: [0~49], y: [0~24]
+
+        # Positional embedding (x, y, c)
+        pos_embedding = [torch.cat((self.pe_fn(v), s.unsqueeze(1)), 1) for v, s in zip(vertices_norm, scores)] # list of [N, pe_dim+1] tensor
+        pos_embedding = torch.stack(pos_embedding) # [b, N, pe_dim+1]
+
+        # dt_embedding = [torch.cat((d, v, s.unsqueeze(1)), dim=1) for d, v, s in zip(dt_embedding, vertices_norm, scores)] # temp
+        dt_embedding = torch.stack(dt_embedding) # [b, N, 64]
+        masks = torch.stack(masks).unsqueeze(-1) # [b, N, 1]
+
+        # graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) if self.distance_reg else self.venc(pos_embedding) # [b, 256, N]
+        graph_embedding = self.venc(pos_embedding) + self.dtenc(dt_embedding) # for visual descriptor
+        # graph_embedding = self.dtenc(dt_embedding) # temp
+        # masks = masks.transpose(1, 2) # [b, 1, N]
+        graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
+        graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
+        # if self.refine:
+        offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
+        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
+
+        # Adjacency matrix score as inner product of all nodes
+        matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
+        matches = matches / self.feature_dim**.5 # [b, N, N] [match.fill_diagonal_(0.0) for match in matches]
+
+        # Don't care self matches
+        b, m, n = matches.shape
+        diag_mask = torch.eye(m).repeat(b, 1, 1).bool()
+        matches[diag_mask] = -1e9
+
+        # Don't care bin matches
+        match_mask = torch.einsum('bnd,bmd->bnm', masks, masks) # [B, N, N]
+        matches = matches.masked_fill(match_mask == 0, -1e9)
+
+        # Matching layer
+        if self.sinkhorn_iters > 0:
+            matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
+        else:
+            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
+            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
+            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+            matches = torch.cat( # [b, N+1, N+1]
+            [
+                torch.cat([matches, bins0], -1), # [b, N, N+1]
+                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+            ], 1)
+            matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
+        # matches.exp() should be probability
+
+        # Refinement offset in pixel coordinate
+        # if self.refine:
+        _, _, h, w = distance.shape # b, 3, 200, 400
+        offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
+        vertices = torch.clamp(vertices*self.cell_size + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
+
+        # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
+
+        # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
+
+        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks

@@ -120,7 +120,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='InstaGraM_cam')
+    parser.add_argument("--model", type=str, default='HDMapNet_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
