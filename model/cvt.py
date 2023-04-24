@@ -137,9 +137,9 @@ class CrossAttention(nn.Module):
 
     def forward(self, q, k, v, skip=None):
         """
-        q: (b n d H W)
-        k: (b n d h w)
-        v: (b n d h w)
+        q: (b n d H W) BEV
+        k: (b n d h w) img_embed + img_feature
+        v: (b n d h w) img_feature
         """
         _, _, _, H, W = q.shape
 
@@ -149,35 +149,35 @@ class CrossAttention(nn.Module):
         v = rearrange(v, 'b n d h w -> b (n h w) d')
 
         # Project with multiple heads
-        q = self.to_q(q)                                # b (n H W) (heads dim_head)
-        k = self.to_k(k)                                # b (n h w) (heads dim_head)
+        q = self.to_q(q)                                # b n (H W) (heads dim_head)
+        k = self.to_k(k)                                # b n (h w) (heads dim_head)
         v = self.to_v(v)                                # b (n h w) (heads dim_head)
 
         # Group the head dim with batch dim
-        q = rearrange(q, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head)
-        k = rearrange(k, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head)
-        v = rearrange(v, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head)
+        q = rearrange(q, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head) # (b heads) n (H W) dim_head
+        k = rearrange(k, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head) # (b heads) n (h w) dim_head
+        v = rearrange(v, 'b ... (m d) -> (b m) ... d', m=self.heads, d=self.dim_head) # (b heads) (n h w) dim_head
 
         # Dot product attention along cameras
         dot = self.scale * torch.einsum('b n Q d, b n K d -> b n Q K', q, k)
         dot = rearrange(dot, 'b n Q K -> b Q (n K)')
-        att = dot.softmax(dim=-1)
+        att = dot.softmax(dim=-1) # along n camera pixels
 
         # Combine values (image level features).
         a = torch.einsum('b Q K, b K d -> b Q d', att, v)
-        a = rearrange(a, '(b m) ... d -> b ... (m d)', m=self.heads, d=self.dim_head)
+        a = rearrange(a, '(b m) ... d -> b ... (m d)', m=self.heads, d=self.dim_head) # b (H W) (heads dim_head)
 
         # Combine multiple heads
-        z = self.proj(a)
+        z = self.proj(a) # b (H W) dim
 
         # Optional skip connection
         if skip is not None:
-            z = z + rearrange(skip, 'b d H W -> b (H W) d')
+            z = z + rearrange(skip, 'b d H W -> b (H W) d') # b (H W) dim
 
-        z = self.prenorm(z)
-        z = z + self.mlp(z)
-        z = self.postnorm(z)
-        z = rearrange(z, 'b (H W) d -> b d H W', H=H, W=W)
+        z = self.prenorm(z) # b (H W) dim
+        z = z + self.mlp(z) # b (H W) dim
+        z = self.postnorm(z) # b (H W) dim
+        z = rearrange(z, 'b (H W) d -> b d H W', H=H, W=W) # b dim H W
 
         return z
 
@@ -263,7 +263,7 @@ class CrossViewAttention(nn.Module):
 
         world = bev.grid[:2]                                                    # 2 H W
         w_embed = self.bev_embed(world[None])                                   # 1 d H W
-        bev_embed = w_embed - c_embed                                           # (b n) d H W
+        bev_embed = w_embed - c_embed                                           # (b n) d H W <- 1 d H W - (b n) d 1 1
         bev_embed = bev_embed / (bev_embed.norm(dim=1, keepdim=True) + 1e-7)    # (b n) d H W
         query_pos = rearrange(bev_embed, '(b n) ... -> b n ...', b=b, n=n)      # b n d H W
 
@@ -325,19 +325,19 @@ class Encoder(nn.Module):
     def forward(self, x, intrinsics, extrinsics):
         b, n, _, _, _ = x.shape
 
-        image = x.flatten(0, 1)            # b n c h w
-        I_inv = intrinsics.inverse()           # b n 3 3
-        E_inv = extrinsics.inverse()           # b n 4 4
+        image = x.flatten(0, 1)            # (b n) c h w
+        I_inv = intrinsics       # b n 3 3
+        E_inv = extrinsics       # b n 4 4
 
-        features = [self.down(y) for y in self.backbone(self.norm(image))]
+        features = [self.down(y) for y in self.backbone(self.norm(image))] # [(b n) 32 h(32) w(88)], [(b n) 112 h(8) w(22)]
 
         x = self.bev_embedding.get_prior()              # d H W
         x = repeat(x, '... -> b ...', b=b)              # b d H W
 
         for cross_view, feature, layer in zip(self.cross_views, features, self.layers):
-            feature = rearrange(feature, '(b n) ... -> b n ...', b=b, n=n)
+            feature = rearrange(feature, '(b n) ... -> b n ...', b=b, n=n) # b n c h w
 
-            x = cross_view(x, self.bev_embedding, feature, I_inv, E_inv)
+            x = cross_view(x, self.bev_embedding, feature, intrinsics, extrinsics)
             x = layer(x)
 
         return x # [b, 64, 25, 50]
@@ -453,8 +453,8 @@ class CrossViewTransformer(nn.Module):
         self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
 
     def get_Ks_RTs_and_post_RTs(self, intrins, rots, trans, post_rots, post_trans):
-        B, N, _, _ = intrins.shape
-        Ks = torch.eye(3, device=intrins.device).view(1, 1, 3, 3).repeat(B, N, 1, 1)
+        B, N, _, _ = intrins.shape # B: batch, N: cams
+        Ks = torch.eye(3, device=intrins.device).view(1, 1, 3, 3).repeat(B, N, 1, 1) # [B, N, 3, 3]
         Ks = Ks @ intrins
         Ks[:, :, 0, 0] *= post_rots[:, :, 0, 0] # fx
         Ks[:, :, 0, 2] *= post_rots[:, :, 0, 0] # u0
@@ -462,10 +462,10 @@ class CrossViewTransformer(nn.Module):
         Ks[:, :, 1, 2] *= post_rots[:, :, 1, 1] # v0
 
         Rs = torch.eye(4, device=rots.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
-        Rs[:, :, :3, :3] = rots.transpose(-1, -2).contiguous()
+        Rs[:, :, :3, :3] = rots.transpose(-1, -2).contiguous() # [B, N, 4, 4]
         Ts = torch.eye(4, device=trans.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
-        Ts[:, :, :3, 3] = -trans
-        RTs = Rs @ Ts
+        Ts[:, :, :3, 3] = -trans # [B, N, 4, 4]
+        RTs = Rs @ Ts # [B, N, 4, 4]
 
         post_RTs = torch.eye(4, device=post_rots.device).view(1, 1, 4, 4).repeat(B, N, 1, 1)
         post_RTs[:, :, :3, :3] = post_rots
