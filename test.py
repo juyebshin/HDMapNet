@@ -21,6 +21,7 @@ from data.visualize import colorise, colors_plt
 from data.image import denormalize_img
 from export_pred_to_json import gen_dx_bx
 from data.utils import get_proj_mat, perspective
+from torchsummary import summary
 
 def gen_dx_bx(xbound, ybound):
     dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
@@ -39,6 +40,15 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
     total_time_list = []
 
     start, mid, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    
+    total_params = 0
+    print("Name : Param.")
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        print(f"{name} : {params}")
+        total_params += params
+    print(f"Total trainable params : {total_params}")
 
     model.eval()
     with torch.no_grad():
@@ -231,7 +241,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='VectorMapNet_cam')
+    parser.add_argument("--model", type=str, default='HDMapNet_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
