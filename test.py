@@ -282,7 +282,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.01)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=7)
+    parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
