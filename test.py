@@ -41,15 +41,6 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
 
     start, mid, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     
-    total_params = 0
-    print("Name : Param.")
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad: continue
-        params = parameter.numel()
-        print(f"{name} : {params}")
-        total_params += params
-    print(f"Total trainable params : {total_params}")
-
     model.eval()
     with torch.no_grad():
         # warmp up
@@ -226,6 +217,14 @@ def main(args):
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
     norm_layer_dict = {'1d': torch.nn.BatchNorm1d, '2d': torch.nn.BatchNorm2d}
     model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    total_params = 0
+    print("Name : Param.")
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        print(f"{name} : {params}")
+        total_params += params
+    print(f"Total trainable params : {total_params}")
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
 
