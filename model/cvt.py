@@ -326,8 +326,8 @@ class Encoder(nn.Module):
         b, n, _, _, _ = x.shape
 
         image = x.flatten(0, 1)            # (b n) c h w
-        I_inv = intrinsics       # b n 3 3
-        E_inv = extrinsics       # b n 4 4
+        I_inv = intrinsics.inverse()       # b n 3 3
+        E_inv = extrinsics.inverse()       # b n 4 4
 
         features = [self.down(y) for y in self.backbone(self.norm(image))] # [(b n) 32 h(32) w(88)], [(b n) 112 h(8) w(22)]
 
