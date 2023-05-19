@@ -79,6 +79,8 @@ def instance_mask_AP(AP_matrix, AP_count_matrix, inst_pred_mask, inst_label_mask
     # inst_pred: N, C, H, W
     # inst_label: N, C, H, W
     # confidence: N, max_instance_num
+    # scale_x: 0.15
+    # scale_y: 0.15
     N, C, H, W = inst_label_mask.shape
     AP_batch = torch.zeros_like(AP_matrix)
     for n in range(N):

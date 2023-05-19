@@ -49,15 +49,15 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             # semantic = semantic.softmax(1).cpu().numpy() # b, 4, 200, 400
             distance = distance.relu().clamp(max=dist_threshold).cpu().numpy()
-            vertex = vertex.softmax(1).cpu().numpy() # b, 65, 25, 50
-            matches_top2, indices_top2 = torch.topk(matches.exp(), 2, -1) # [b, N+1, 2]
-            matches = matches.exp().cpu().float().numpy() # b, N+1, N+1 for sinkhorn
-            masks = masks.detach().cpu().int().numpy().squeeze(-1) # b, 300
+            vertex = vertex.sigmoid().cpu().numpy() # b 3 25 50
+            matches_top2, indices_top2 = torch.topk(matches.exp(), 2, -1) # b c N+1 2
+            matches = matches.exp().cpu().float().numpy() # b c N+1 N+1 for sinkhorn
+            masks = masks.detach().cpu().int().numpy().squeeze(-1) # b c N
             # attentions = attentions.detach().cpu().float().numpy() # b, 7, 4, 300, 300
             # semantic[semantic < 0.1] = np.nan
             # semantic[semantic < 0.1] = 0.0
@@ -207,20 +207,19 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # plt.close()
 
                     # vector prediction
-                    mask = masks[si] # [400]
-                    position_valid = positions[si].detach().cpu().float().numpy() # [N, 3]
+                    mask = masks[si] # 3 N
+                    position_valid = positions[si].detach().cpu().float().numpy()[..., :-1] # 3 N 2
                     position_valid = position_valid * dx + bx # [-30, -15, 30, 15]
-                    position_valid = position_valid[mask == 1] # [M, 3]
-
-                    # vector segmentation prediction
-                    semantic_onehot = semantic[si].exp().detach().cpu().float().numpy() # [3, N]
-                    semantic_onehot = semantic_onehot.argmax(0)[mask == 1] # [M]
+                    # position_valid = position_valid[mask == 1] # [M, 3]
 
                     fig = plt.figure(figsize=(4, 2))
                     plt.xlim(-30, 30)
                     plt.ylim(-15, 15)
                     plt.axis('off')
-                    plt.scatter(position_valid[:, 0], position_valid[:, 1], s=1.0, c=[colors_plt[c] for c in semantic_onehot])
+                    
+                    for ci, (cposition_valid, cmask) in enumerate(zip(position_valid, mask)):
+                        cposition_valid = cposition_valid[cmask == 1] # M 3
+                        plt.scatter(cposition_valid[:, 0], cposition_valid[:, 1], s=1.0, c=colors_plt[ci])
                     
                     impath = os.path.join(logdir, 'segmentation')
                     if not os.path.exists(impath):
@@ -258,7 +257,8 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     # plt.savefig(imname, bbox_inches='tight', dpi=400)
                     # plt.close()
 
-                    match_top2, index_top2 = matches_top2[si, :-1].cpu().numpy()[mask==1], indices_top2[si, :-1].cpu().numpy()[mask==1] # [M, 2]
+                    # b c N+1 2
+                    match_top2, index_top2 = matches_top2[si].cpu().numpy(), indices_top2[si].cpu().numpy() # c N+1 2
                     
                     impath = os.path.join(logdir, 'vector_top2')
                     if not os.path.exists(impath):
@@ -271,12 +271,15 @@ def vis_segmentation(model, val_loader, logdir, distance_reg=False, dist_thresho
                     plt.ylim(-15, 15)
                     plt.axis('off')
                     plt.grid(False)
+                    
+                    for ci, (cmatch_top2, cindex_top2, cposition_valid, cmask) in enumerate(zip(match_top2, index_top2, position_valid, mask)):
+                        cmatch_top2, cindex_top2 = cmatch_top2[:-1][cmask == 1], cindex_top2[:-1][cmask == 1] # M 2
+                        cposition_valid = cposition_valid[cmask == 1] # M 3
 
-                    # plt.scatter(position_valid[:, 0], position_valid[:, 1], s=0.5, c=position_valid[:, 2], cmap='jet', vmin=0.0, vmax=1.0)
-                    for idx, (score, next) in enumerate(zip(match_top2, index_top2)):
-                        for s, n in zip(score, next):
-                            if n < len(position_valid):
-                                plt.plot([position_valid[idx, 0], position_valid[n, 0]], [position_valid[idx, 1], position_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
+                        for idx, (score, next) in enumerate(zip(cmatch_top2, cindex_top2)):
+                            for s, n in zip(score, next):
+                                if n < len(cposition_valid):
+                                    plt.plot([cposition_valid[idx, 0], cposition_valid[n, 0]], [cposition_valid[idx, 1], cposition_valid[n, 1]], '-', c=colorise(s, 'jet', 0.0, 1.0))
                     
                     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                     plt.savefig(imname, bbox_inches='tight', dpi=400)
@@ -419,12 +422,12 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(val_loader):
             
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                 post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                 lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             
             for si in range(imgs.shape[0]):
-                coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], data_conf['match_threshold'])
+                coords, confidences, line_types = vectorize_graph(positions[si], matches[si], masks[si], data_conf['match_threshold'])
                 idx = batchi*val_loader.batch_size + si
                 rec = val_loader.dataset.samples[idx]
                 scene_name = val_loader.dataset.nusc.get('scene', rec['scene_token'])['name']
@@ -643,11 +646,10 @@ def main(args):
     model.cuda()
     # vis_vector(model, val_loader, args.angle_class, args.logdir)
     # todo: class-wise vertex detection
-    vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
+    # vis_segmentation(model, val_loader, args.logdir, args.distance_reg, args.dist_threshold, args.vertex_pred, args.cell_size, args.vertex_threshold)
     # if args.instance_seg and args.direction_pred:
     #     vis_vector(model, val_loader, args.angle_class, args.logdir)
-    if args.model == 'InstaGraM_cam':
-        vis_vectormapnet(model, val_loader, args.logdir, data_conf)
+    vis_vectormapnet(model, val_loader, args.logdir, data_conf)
         # vis_vectormapnet_scene(args.dataroot, args.version, model, args)
 
 
@@ -661,7 +663,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='InstaGraM_cam')
+    parser.add_argument("--model", type=str, default='HDMapNet_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
@@ -723,7 +725,7 @@ if __name__ == '__main__':
     parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=200) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.5)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)

@@ -127,7 +127,7 @@ def train(args):
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
 
@@ -162,7 +162,7 @@ def train(args):
                 dt_loss = 0
                 # normalize 0~1?
             
-            cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            cdist_loss, match_loss, matches_gt = graph_loss_fn(matches, positions, masks, vectors_gt)
             if not args.refine:
                 cdist_loss = 0.0
             
@@ -172,7 +172,7 @@ def train(args):
             # else:
             #     vt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match
+            final_loss = var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
@@ -181,6 +181,7 @@ def train(args):
 
             if counter % 10 == 0:
                 heatmap = vertex.sigmoid()
+                heatmap[heatmap < args.vertex_threshold] = 0.0
                 intersects, union = get_batch_iou(heatmap, vertex_gt.max(2)[0])
                 iou = intersects / (union + 1e-7)
                 cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
@@ -192,13 +193,11 @@ def train(args):
                             f"DT loss: {(dt_loss.item() if args.distance_reg else dt_loss):>7.4f}    "
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
-                            f"Seg loss: {seg_loss.item():>7.4f}    "
                             f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
 
                 if writer is not None:
                     write_log(writer, iou, total_cdist, 'train', counter)
                     writer.add_scalar('train/step_time', t1 - t0, counter)
-                    writer.add_scalar('train/seg_loss', seg_loss, counter)
                     writer.add_scalar('train/var_loss', var_loss, counter)
                     writer.add_scalar('train/dist_loss', dist_loss, counter)
                     writer.add_scalar('train/reg_loss', reg_loss, counter)
@@ -218,7 +217,7 @@ def train(args):
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.sigmoid()
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt.max(2)[0], vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt.max(2)[0], vectors_gt, matches_gt, None, distance, heatmap, matches, positions, None, masks, counter, args)
                 
             counter += 1
 
@@ -336,7 +335,7 @@ if __name__ == '__main__':
     parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
+    parser.add_argument("--num_vectors", type=int, default=250) # 100 * 3 classes = 300 in total
     parser.add_argument("--vertex_threshold", type=float, default=0.5)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)

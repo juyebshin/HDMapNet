@@ -90,154 +90,163 @@ class GraphLoss(nn.Module):
         self.ce_fn = torch.nn.CrossEntropyLoss()
         self.nll_fn = torch.nn.NLLLoss()
 
-    def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
-        # matches: [b, N+1, N+1]
-        # positions: [b, N, 2], x y
-        # semantics: [b, 3, N] log_softmax dim=1
-        # masks: [b, N, 1]
+    def forward(self, matches: torch.Tensor, positions: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
+        # matches: b c N+1 N+1
+        # positions: b c N 3, x y score
+        # masks: b c N 1
         # vectors_gt: [b] list of [instance] list of dict
         # matches = matches.exp()
 
         # iterate in batch
         closs_list = []
         mloss_list = []
-        semloss_list = []
+        # semloss_list = []
         matches_gt = []
-        semantics_gt = []
-        for match, position, semantic, mask, vector_gt in zip(matches, positions, semantics, masks, vectors_gt):
-            # match: [N, N+1]
-            # position: [N, 2] pixel coords
-            # semantic: [3, N]
-            # mask: [N, 1] M ones
+        # semantics_gt = []
+        positions = positions[..., :-1] # b c N 2, x y
+        for match, position, mask, vector_gt in zip(matches, positions, masks, vectors_gt):
+            # match: c N+1 N+1
+            # position: c N 2, pixel coords
+            # mask: c N 1, M ones
             # vector_gt: [instance] list of dict
-            mask = mask.squeeze(-1) # [N,]
-            position_valid = position / (torch.tensor(self.nx, device=position.device)-1) # normalize 0~1, [N, 2]
-            position_valid = position_valid[mask == 1] # [M, 2] x, y
-            semantic_valid = semantic[:, mask == 1] # [4, M]
             
-            pts_list = []
-            pts_ins_list = []
-            pts_ins_order = []
-            pts_type_list = []
-            for ins, vector in enumerate(vector_gt): # dict
-                pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-                pts = pts[:pts_num] # [p, 2] array in meters
-                # normalize coordinates 0~1
-                [(pts_list.append((pt + self.bound) / (2*self.bound)), pts_ins_order.append(i)) for i, pt in enumerate(pts)]
-                # [pts_list.append(pt) for pt in pts]
-                [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
-                [pts_type_list.append(line_type) for _ in pts] # semantic for all vectors 0, 1, 2
+            ccloss_list = []
+            cmloss_list = []
+            cmatches_gt = []
             
-            position_gt = torch.tensor(np.array(pts_list), device=position.device).float() # [P, 2] shaped tensor
-            match_gt = torch.zeros_like(match) # [N+1, N+1]
-            semantic_gt = torch.zeros_like(semantic) # [3, N]
+            for ci, (cmatch, cposition, cmask) in enumerate(zip(match, position, mask)):
+                # cmatch: N+1 N+1
+                # cposition: N 2
+                # cmask: N 1
+                cmask = cmask.squeeze(-1) # N
+                cposition_valid = cposition / (torch.tensor(self.nx, device=cposition.device)-1) # normalize 0~1, N 2
+                cposition_valid = cposition_valid[cmask == 1] # M 2; x, y
+            
+                pts_list = []
+                pts_ins_list = []
+                pts_ins_order = []
+                # pts_type_list = []
+                for ins, vector in enumerate(vector_gt): # dict
+                    pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                    pts = pts[:pts_num] # [p, 2] array in meters
+                    # normalize coordinates 0~1
+                    if line_type == ci:
+                        [(pts_list.append((pt + self.bound) / (2*self.bound)), pts_ins_order.append(i)) for i, pt in enumerate(pts)]
+                        [pts_ins_list.append(ins) for _ in pts] # instance ID for all vectors
+            
+                position_gt = torch.tensor(np.array(pts_list), device=position.device).float() # [P, 2] shaped tensor
+                match_gt = torch.zeros_like(cmatch) # N+1 N+1
 
-            if len(position_gt) > 0 and len(position_valid) > 0:
-                # compute chamfer distance # [N, P] shaped tensor
-                cdist = torch.cdist(position_valid, position_gt) # [M, P]
-                nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
+                if len(position_gt) > 0 and len(cposition_valid) > 0:
+                    # compute chamfer distance # [N, P] shaped tensor
+                    cdist = torch.cdist(cposition_valid, position_gt) # [M, P]
+                    nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
 
-                if len(nearest) > 1: # at least two vertices
-                    nearest_ins = []
-                    for n, d in zip(nearest, nearest_dist):
-                        nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
-                    for i in range(max(nearest_ins)+1): # for all instance IDs
-                        indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
-                        ins_order = [pts_ins_order[nearest[oi]] for oi in indices]
-                        indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
-                        match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0
-                    dist_map = torch.cdist(position_valid, position_valid)
+                    if len(nearest) > 1: # at least two vertices
+                        nearest_ins = []
+                        for n, d in zip(nearest, nearest_dist):
+                            nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
+                        for i in range(max(nearest_ins)+1): # for all instance IDs
+                            indices = [ni for ni, x in enumerate(nearest_ins) if x == i] # ni: vector index, x: nearest instance ID
+                            ins_order = [pts_ins_order[nearest[oi]] for oi in indices]
+                            indices_sorted = [idx for ord, idx in sorted(zip(ins_order, indices))]
+                            match_gt[indices_sorted[:-1], indices_sorted[1:]] = 1.0
+                        dist_map = torch.cdist(cposition_valid, cposition_valid)
 
-                    for idx_pred, idx_gt in enumerate(nearest):
-                        semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
-                    
-                    match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
-                    # leave only one match along row dimension with closest vector
-                    multi_cols, = torch.where(match_gt_sum_backward > 1) # [num_cols]
-                    for multi_col in multi_cols:
-                        rows, = torch.where(match_gt[:, multi_col] > 0)
-                        match_gt[rows, multi_col] = 0.0
-                        _, min_row_idx = dist_map[rows, multi_col].min(0)
-                        match_gt[rows[min_row_idx], multi_col] = 1.0
+                        # for idx_pred, idx_gt in enumerate(nearest):
+                        #     semantic_gt[pts_type_list[idx_gt], idx_pred] = 1.0
+                        
+                        match_gt_sum_backward = match_gt[:, :-1].sum(0) # [N]
+                        # leave only one match along row dimension with closest vector
+                        multi_cols, = torch.where(match_gt_sum_backward > 1) # [num_cols]
+                        for multi_col in multi_cols:
+                            rows, = torch.where(match_gt[:, multi_col] > 0)
+                            match_gt[rows, multi_col] = 0.0
+                            _, min_row_idx = dist_map[rows, multi_col].min(0)
+                            match_gt[rows[min_row_idx], multi_col] = 1.0
 
-                    mask_bins = torch.cat([mask, mask.new_tensor(1).expand(1)], 0)
-                    match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
-                    match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
-                    assert torch.min(match_gt[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt[:-1].sum(1))}"
-                    assert torch.max(match_gt[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt[:-1].sum(1))}"
+                        cmask_bins = torch.cat([cmask, cmask.new_tensor(1).expand(1)], 0) # M+1
+                        match_gt_sum_forward = match_gt[:-1].sum(1) # [N]
+                        match_gt[:-1][match_gt_sum_forward == 0, -1] = 1.0
+                        assert torch.min(match_gt[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt[:-1].sum(1))}"
+                        assert torch.max(match_gt[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt[:-1].sum(1))}"
 
-                    match_gt_sum_backward = match_gt[:, :-1].sum(0)
-                    match_gt[:, :-1][-1, match_gt_sum_backward == 0] = 1.0
-                    assert torch.min(match_gt[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt[:, :-1].sum(0))}"
-                    assert torch.max(match_gt[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt[:, :-1].sum(0))}"
+                        match_gt_sum_backward = match_gt[:, :-1].sum(0)
+                        match_gt[:, :-1][-1, match_gt_sum_backward == 0] = 1.0
+                        assert torch.min(match_gt[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt[:, :-1].sum(0))}"
+                        assert torch.max(match_gt[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt[:, :-1].sum(0))}"
 
-                    match_valid = match[mask_bins == 1][:, mask_bins == 1] # [M+1, M+1]
-                    match_gt_valid = match_gt[mask_bins == 1][:, mask_bins == 1] # [M, M+1]
-                    assert torch.min(match_gt_valid[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid[:-1].sum(1))}"
-                    assert torch.max(match_gt_valid[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid[:-1].sum(1))}"
-                    assert torch.min(match_gt_valid[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt_valid[:, :-1].sum(0))}"
-                    assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
+                        cmatch_valid = cmatch[cmask_bins == 1][:, cmask_bins == 1] # M+1 M+1
+                        match_gt_valid = match_gt[cmask_bins == 1][:, cmask_bins == 1] # M M+1
+                        assert torch.min(match_gt_valid[:-1].sum(1)) == 1, f"minimum value of row-wise sum expected 1, but got: {torch.min(match_gt_valid[:-1].sum(1))}"
+                        assert torch.max(match_gt_valid[:-1].sum(1)) == 1, f"maximum value of row-wise sum expected 1, but got: {torch.max(match_gt_valid[:-1].sum(1))}"
+                        assert torch.min(match_gt_valid[:, :-1].sum(0)) == 1, f"minimum value of col-wise sum expected 1, but got: {torch.min(match_gt_valid[:, :-1].sum(0))}"
+                        assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
 
-                    # add minibatch dimension and class first
-                    match_valid = match_valid.unsqueeze(0).transpose(1, 2) # [1, M+1, M+1] class dim first
-                    match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M+1, M+1]
+                        # add minibatch dimension and class first
+                        cmatch_valid = cmatch_valid.unsqueeze(0).transpose(1, 2) # 1 M+1 M+1 class dim first
+                        match_gt_valid = match_gt_valid.unsqueeze(0) # 1 M+1 M+1
 
-                    # backward col -> row
-                    match_gt_valid_backward = match_gt_valid.argmax(1) # col -> row [1, M+1]
-                    match_loss_backward = self.nll_fn(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
+                        # backward col -> row
+                        match_gt_valid_backward = match_gt_valid.argmax(1) # col -> row [1, M+1]
+                        cmatch_loss_backward = self.nll_fn(cmatch_valid[..., :-1], match_gt_valid_backward[..., :-1])
 
-                    # forward row -> col
-                    # match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
-                    match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
-                    match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
+                        # forward row -> col
+                        # match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
+                        match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
+                        cmatch_loss_forward = self.nll_fn(cmatch_valid[..., :-1], match_gt_valid_forward[..., :-1])
 
-                    match_loss = (match_loss_forward + match_loss_backward)
-                    # match_loss = match_loss_forward
+                        match_loss = (cmatch_loss_forward + cmatch_loss_backward)
+                        # match_loss = match_loss_forward
 
-                    semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
-                    semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
-                    assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
-                    assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
-                    semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
+                        # semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                        # semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                        # assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
+                        # assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
+                        # semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
 
-                    semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
+                        # semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
 
-                    coord_loss = F.l1_loss(position_valid, position_gt[nearest])                
+                        coord_loss = F.l1_loss(cposition_valid, position_gt[nearest])                
+                    else:
+                        coord_loss = position_gt.new_tensor(0.0)
+                        match_loss = position_gt.new_tensor(0.0)
+                        # semantic_loss = position_gt.new_tensor(0.0)
                 else:
                     coord_loss = position_gt.new_tensor(0.0)
                     match_loss = position_gt.new_tensor(0.0)
-                    semantic_loss = position_gt.new_tensor(0.0)
-            else:
-                coord_loss = position_gt.new_tensor(0.0)
-                match_loss = position_gt.new_tensor(0.0)
-                semantic_loss = position_gt.new_tensor(0.0)
+                    # semantic_loss = position_gt.new_tensor(0.0)
+                
+                ccloss_list.append(coord_loss) # c list of float
+                cmloss_list.append(match_loss) # c list of float
+                cmatches_gt.append(match_gt) # c list of [N+1 N+1] tensor
+            
+            coord_loss = torch.stack(ccloss_list).mean()
+            match_loss = torch.stack(cmloss_list).mean()
+            match_gt = torch.stack(cmatches_gt) # c N+1 N+1
             
             closs_list.append(coord_loss)
             mloss_list.append(match_loss)
-            semloss_list.append(semantic_loss)
-            matches_gt.append(match_gt)
-            semantics_gt.append(semantic_gt)
+            matches_gt.append(match_gt) # b list of [c N+1 N+1] tensor
         
         closs_batch = torch.stack(closs_list) # [b,]
         mloss_batch = torch.stack(mloss_list) # [b,]
-        semloss_batch = torch.stack(semloss_list) # [b,]
-        matches_gt = torch.stack(matches_gt) # [b, N+1, N+1]
-        semantics_gt = torch.stack(semantics_gt) # [b, 3, N]
+        matches_gt = torch.stack(matches_gt) # b c N+1 N+1
 
         if self.reduction == 'none':
             pass
         elif self.reduction == 'mean':
             closs_batch = torch.mean(closs_batch)
             mloss_batch = torch.mean(mloss_batch)
-            semloss_batch = torch.mean(semloss_batch)
+            # semloss_batch = torch.mean(semloss_batch)
         elif self.reduction == 'sum':
             closs_batch = torch.sum(closs_batch)
             mloss_batch = torch.sum(mloss_batch)
-            semloss_batch = torch.sum(semloss_batch)
+            # semloss_batch = torch.sum(semloss_batch)
         else:
             raise NotImplementedError
         
-        return closs_batch, mloss_batch, semloss_batch, matches_gt, semantics_gt
+        return closs_batch, mloss_batch, matches_gt
 
 
 class DiscriminativeLoss(nn.Module):

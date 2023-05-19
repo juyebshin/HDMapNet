@@ -48,31 +48,31 @@ def remove_borders(vertices, scores, border: int, height: int, width: int):
 
 def sample_dt(vertices, distance: Tensor, s: int = 8):
     """ Extract distance transform patches around vertices """
-    # vertices: # tuple of length b, [N, 3(class, row, col)] tensor, in (25, 50) cell
-    # distance: (b, 3, 200, 400) tensor
+    # vertices: # tuple of length (b c), [N, 2(row, col)] tensor, in (25, 50) cell
+    # distance: (b c) 200 400 tensor
     # embedding, _ = distance.max(1, keepdim=False) # b, 200, 400
     embedding = distance # 0 ~ 10 -> 0 ~ 1 normalize
-    b, c, h, w = embedding.shape # b, 3, 200, 400
+    bc, h, w = embedding.shape # (b 3) 200 400
     hc, wc = int(h/s), int(w/s) # 25, 50
-    embedding = embedding.reshape(b, c, hc, s, wc, s).permute(0, 1, 2, 4, 3, 5) # b, c, 25, 8, 50, 8 -> b, c, 25, 50, 8, 8
-    embedding = embedding.reshape(b, c, hc, wc, s*s).permute(0, 2, 3, 1, 4) # b, c, 25, 50, 64 -> b, 25, 50, 3, 64
-    embedding = embedding.reshape(b, hc, wc, -1) # b, 25, 50, 192
-    embedding = [e[tuple(vc[:, 1:].t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 192] tensor
+    embedding = embedding.reshape(bc, hc, s, wc, s).permute(0, 1, 3, 2, 4) # (b c) 25 8 50 8 -> (b c) 25 50 8 8
+    embedding = embedding.reshape(bc, hc, wc, s*s) # (b c) 25 50 64
+    # embedding = embedding.reshape(b, hc, wc, -1) # b, 25, 50, 192
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length (b c), [N, 64] tensor
     return embedding
 
 def sample_feat(vertices, feature: Tensor):
     """ Extract feature patches around vertices """
-    # vertices: # tuple of length b, [N, 3(class, row, col)] tensor, in (25, 50) cell
-    # feature: (b, 256, 25, 50) tensor
-    b, c, h, w = feature.shape # b, 256, 25, 50
-    embedding = feature.permute(0, 2, 3, 1) # [b, 25, 50, 256]
-    embedding = [e[tuple(vc[:, 1:].t())] for e, vc in zip(embedding, vertices)] # tuple of length b, [N, 256] tensor
+    # vertices: # tuple of length (b c), [N, 2(row, col)] tensor, in (25, 50) cell
+    # feature: (b c) 256 25 50 tensor
+    bc, c, h, w = feature.shape # (b c) 256 25 50
+    embedding = feature.permute(0, 2, 3, 1) # (b c) 25 50 256
+    embedding = [e[tuple(vc.t())] for e, vc in zip(embedding, vertices)] # tuple of length (b c), [N, 256] tensor
     return embedding
 
 def normalize_vertices(vertices: Tensor, image_shape):
     """ Normalize vertices locations in BEV space """
     # vertices: [N, 2] tensor in (x, y): (0~49, 0~24)
-    _, _, height, width = image_shape # b, 3, 25, 50
+    _, height, width = image_shape # b c 25 50
     one = vertices.new_tensor(1) # [1], values 1
     size = torch.stack([one*width, one*height])[None] # [1, 2], values [50, 25]
     center = size / 2.0 # [1, 2], values [25, 12.5]

@@ -60,7 +60,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             car_trans = car_trans.unsqueeze(0) # [1, 3]
             yaw_pitch_roll = yaw_pitch_roll.unsqueeze(0) # [1, 3]
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
         print("Running test...")
@@ -85,11 +85,11 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             yaw_pitch_roll = yaw_pitch_roll.unsqueeze(0) # [1, 3]
 
             start.record()
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+            distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             mid.record()
-            coords, confidences, line_types = vectorize_graph(positions[0], matches[0], semantic[0], masks[0], data_conf['match_threshold'])
+            coords, confidences, line_types = vectorize_graph(positions[0], matches[0], masks[0], data_conf['match_threshold'])
             end.record()
             torch.cuda.synchronize()
 
@@ -102,20 +102,46 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             total_time_list.append(total_time)
 
             if vis:
+                impath = os.path.join(logdir, 'vector_gt')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'{base_name}.png')
+                # print('saving', imname)
+
+                fig = plt.figure(figsize=(4, 2))
+                plt.xlim(-30, 30)
+                plt.ylim(-15, 15)
+                plt.axis('off')
+
+                for vector in vectors_gt:
+                    pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                    pts = pts[:pts_num]
+                    x = np.array([pt[0] for pt in pts])
+                    y = np.array([pt[1] for pt in pts])
+                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+                    plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
+                    plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                plt.close()
+                
                 impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.jpg')
                 # print('saving', imname)
 
-                fig = plt.figure(figsize=(8, 3))
+                fig = plt.figure() # figsize=(8, 3)
+                plt.axis('off')
+                row_1_list = []
+                row_2_list = []
                 for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[0], intrins[0], rots[0], trans[0], CAMS)):
                     img = np.array(denormalize_img(img)) # h, w, 3
                     intrin = intrin_scale @ intrin
                     P = get_proj_mat(intrin, rot, tran)
-                    ax = fig.add_subplot(2, 3, i+1)
-                    ax.get_xaxis().set_visible(False)
-                    ax.get_yaxis().set_visible(False)
+                    # ax = fig.add_subplot(2, 3, i+1)
+                    # ax.get_xaxis().set_visible(False)
+                    # ax.get_yaxis().set_visible(False)
                     for coord, confidence, line_type in zip(coords, confidences, line_types):
                         coord = coord * dx + bx # [-30, -15, 30, 15]
                         pts, pts_num = coord, coord.shape[0]
@@ -134,9 +160,17 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                     text_w, text_h = text_size
                     cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
                     img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
-                    ax.imshow(img)
+                    # ax.imshow(img)
+                    if i < 3:
+                        row_1_list.append(img)
+                    else:
+                        row_2_list.append(img)
                     
-                plt.subplots_adjust(wspace=0.0, hspace=0.0)
+                row_1_img = cv2.hconcat(row_1_list)
+                row_2_img = cv2.hconcat(row_2_list)
+                surround = cv2.vconcat([row_1_img, row_2_img])
+                plt.imshow(surround)
+                # plt.subplots_adjust(wspace=0.0, hspace=0.0)
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
@@ -180,6 +214,33 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                     coord = coord * dx + bx # [-30, -15, 30, 15]
                     plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                plt.close()
+                
+                # Meta
+                impath = os.path.join(logdir, 'meta')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'{base_name}.jpg')
+                # print('saving', imname)
+
+                fig = plt.figure() # figsize=(8, 3)
+                plt.axis('off')
+                
+                images = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'images'), f'{base_name}.jpg')), cv2.COLOR_BGR2RGB) # rgb
+                pred = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'vector_pred_final'), f'{base_name}.png')), cv2.COLOR_BGR2RGB) # rgb
+                gt = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'vector_gt'), f'{base_name}.png')), cv2.COLOR_BGR2RGB) # rgb
+                pred = cv2.rotate(pred, cv2.ROTATE_90_COUNTERCLOCKWISE) # rgb
+                gt = cv2.rotate(gt, cv2.ROTATE_90_COUNTERCLOCKWISE) # rgb
+                
+                target_h = images.shape[0]
+                source_h = pred.shape[0]
+                scale = target_h / source_h
+                pred = cv2.resize(pred, (0, 0), fx=scale, fy=scale)
+                gt = cv2.resize(gt, (0, 0), fx=scale, fy=scale)
+                
+                meta = cv2.hconcat([images, pred, gt])
+                plt.imshow(meta)
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
@@ -231,7 +292,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
-    parser.add_argument("--model", type=str, default='VectorMapNet_cam')
+    parser.add_argument("--model", type=str, default='HDMapNet_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
@@ -269,10 +330,10 @@ if __name__ == '__main__':
     parser.add_argument("--refine", action='store_true')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=400) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.01)
+    parser.add_argument("--num_vectors", type=int, default=250) # 100 * 3 classes = 300 in total
+    parser.add_argument("--vertex_threshold", type=float, default=0.3)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--gnn_layers", nargs='?', type=str, default=7)
+    parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
