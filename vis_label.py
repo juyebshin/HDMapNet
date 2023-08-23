@@ -55,7 +55,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
             x = np.array([pt[0] for pt in pts])
             y = np.array([pt[1] for pt in pts])
             # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-            plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
+            # plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
             plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
             num_vectors[line_type] += pts_num
         num_list = num_vectors.tolist()
@@ -65,7 +65,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'MAP.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=400)
+        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
         plt.close()
 
         # major_xticks = np.linspace(-30, 30, 51)
@@ -98,7 +98,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
             fig = plt.imshow(img)
             fig.axes.get_xaxis().set_visible(False)
             fig.axes.get_yaxis().set_visible(False)
-            plt.xlim(1600, 0)
+            plt.xlim(0, 1600)
             plt.ylim(900, 0)
             plt.axis('off')
             # for vector in vectors:
@@ -114,7 +114,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
             #             angles='xy', scale=1, color=colors_plt[line_type])
 
             cam_path = os.path.join(base_path, f'{cam}.png')
-            plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
+            # plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
             plt.close()
     
     with open('num_vectors_train_class.csv', 'w') as f:
@@ -126,10 +126,10 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local HD Map Demo.')
-    parser.add_argument('dataroot', nargs='?', type=str, default='/home/user/data/juyeb/dataset/nuscenes')
+    parser.add_argument('dataroot', nargs='?', type=str, default='nuscenes/')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
-    parser.add_argument("--ybound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
+    parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
     parser.add_argument("--sample_dist", type=float, default=1.5)
     parser.add_argument("--is_train", action='store_true')
     args = parser.parse_args()

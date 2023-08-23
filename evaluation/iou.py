@@ -33,6 +33,7 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
     pred_positions = pred_positions[..., :-1] # (b c) N 2
 
     dx, bx, nx = gen_dx_bx(xbound, ybound)
+    patch_size = torch.tensor([row[1] - row[0] for row in [xbound, ybound]], device=pred_positions.device) # [60, 30]
 
     cdist_p_list = []
     cdist_l_list = []
@@ -46,7 +47,7 @@ def get_batch_cd(pred_positions: torch.Tensor, gt_vectors: list, masks: torch.Te
                 # cpred_position: N 2
                 # cmask: N 1
                 cmask = cmask.squeeze(-1) # N
-                cpred_position = cpred_position * torch.tensor(dx).cuda() + torch.tensor(bx).cuda() # de-normalize, [N, 2]
+                cpred_position = cpred_position * patch_size - patch_size/2 # de-normalize, [N, 2]
                 cpred_position = cpred_position[cmask == 1] # M 2; x, y
                 pts_list = []
                 for ins, vector in enumerate(gt_vector): # dict

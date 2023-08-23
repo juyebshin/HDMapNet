@@ -30,6 +30,7 @@ def gen_dx_bx(xbound, ybound):
 
 def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
     dx, bx, nx = gen_dx_bx(data_conf['xbound'], data_conf['ybound'])
+    patch_size = np.array([row[1] - row[0] for row in [data_conf['xbound'], data_conf['ybound']]]) # [60, 30]
     car_img = Image.open('icon/car.png')
     img_size = data_conf['image_size'] # [128, 352]
     intrin_scale = torch.tensor([img_size[1] / 1600., img_size[0] / 900., 1.0]) * torch.eye(3)
@@ -143,7 +144,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                     # ax.get_xaxis().set_visible(False)
                     # ax.get_yaxis().set_visible(False)
                     for coord, confidence, line_type in zip(coords, confidences, line_types):
-                        coord = coord * dx + bx # [-30, -15, 30, 15]
+                        coord = coord * patch_size - patch_size/2 # [-30, -15, 30, 15]
                         pts, pts_num = coord, coord.shape[0]
                         zeros = np.zeros((pts_num, 1))
                         ones = np.ones((pts_num, 1))
@@ -238,6 +239,16 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 scale = target_h / source_h
                 pred = cv2.resize(pred, (0, 0), fx=scale, fy=scale)
                 gt = cv2.resize(gt, (0, 0), fx=scale, fy=scale)
+                
+                text_size, _ = cv2.getTextSize('pred', cv2.FONT_HERSHEY_SIMPLEX, 1, 1)
+                text_w, text_h = text_size
+                cv2.rectangle(pred, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                pred = cv2.putText(pred, 'pred', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1, cv2.LINE_AA)
+                
+                text_size, _ = cv2.getTextSize('gt', cv2.FONT_HERSHEY_SIMPLEX, 1, 1)
+                text_w, text_h = text_size
+                cv2.rectangle(gt, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                gt = cv2.putText(gt, 'gt', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1, cv2.LINE_AA)
                 
                 meta = cv2.hconcat([images, pred, gt])
                 plt.imshow(meta)

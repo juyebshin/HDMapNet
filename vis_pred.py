@@ -416,6 +416,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
     car_img = Image.open('icon/car.png')
     xbound, ybound = data_conf['xbound'], data_conf['ybound']
     dx, bx, nx = gen_dx_bx(xbound, ybound)
+    patch_size = np.array([row[1] - row[0] for row in [xbound, ybound]]) # [60, 30]
     img_size = data_conf['image_size'] # [128, 352]
     intrin_scale = torch.tensor([img_size[1] / 1600., img_size[0] / 900., 1.0]) * torch.eye(3)
 
@@ -439,6 +440,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 
                 vector_gt = vectors_gt[si] # [instance] list of dict
 
+                '''GT'''
                 impath = os.path.join(logdir, 'vector_gt')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
@@ -462,45 +464,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
-                impath = os.path.join(logdir, 'images')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.jpg')
-                print('saving', imname)
-
-                fig = plt.figure(figsize=(8, 3))
-                for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[si], intrins[si], rots[si], trans[si], CAMS)):
-                    img = np.array(denormalize_img(img)) # h, w, 3
-                    intrin = intrin_scale @ intrin
-                    P = get_proj_mat(intrin, rot, tran)
-                    ax = fig.add_subplot(2, 3, i+1)
-                    ax.get_xaxis().set_visible(False)
-                    ax.get_yaxis().set_visible(False)
-                    for coord, confidence, line_type in zip(coords, confidences, line_types):
-                        coord = coord * dx + bx # [-30, -15, 30, 15]
-                        pts, pts_num = coord, coord.shape[0]
-                        zeros = np.zeros((pts_num, 1))
-                        ones = np.ones((pts_num, 1))
-                        world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
-                        pix_coords = perspective(world_coords, P)
-                        x = np.array([pts[0] for pts in pix_coords], dtype='int')
-                        y = np.array([pts[1] for pts in pix_coords], dtype='int')
-                        for j in range(1, x.shape[0]):
-                            img = cv2.line(img, (x[j-1], y[j-1]), (x[j], y[j]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
-                    if i > 2:
-                        img = cv2.flip(img, 1)
-                    img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
-                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_COMPLEX, 3, 3)
-                    text_w, text_h = text_size
-                    cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_COMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
-                    ax.imshow(img)
-                    
-                plt.subplots_adjust(wspace=0.0, hspace=0.0)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                plt.close()
-
-                # Vector map
+                '''Vector map'''
                 impath = os.path.join(logdir, 'vector_pred_final')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
@@ -513,7 +477,7 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 plt.axis('off')
 
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
-                    coord = coord * dx + bx # [-30, -15, 30, 15]
+                    coord = coord * patch_size - patch_size/2 # [-30, -15, 30, 15]
                     x = np.array([pt[0] for pt in coord])
                     y = np.array([pt[1] for pt in coord])
                     plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
@@ -524,22 +488,109 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
 
-                # Instance map
-                impath = os.path.join(logdir, 'instance_pred')
+                '''Images'''
+                impath = os.path.join(logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.png')
+                imname = os.path.join(impath, f'{base_name}.jpg')
                 print('saving', imname)
 
-                fig = plt.figure(figsize=(4, 2))
-                plt.xlim(-30, 30)
-                plt.ylim(-15, 15)
+                fig = plt.figure() # figsize=(8, 3)
                 plt.axis('off')
+                row_1_list = []
+                row_2_list = []
+                for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[si], intrins[si], rots[si], trans[si], CAMS)):
+                    img = np.array(denormalize_img(img)) # h, w, 3
+                    intrin = intrin_scale @ intrin
+                    P = get_proj_mat(intrin, rot, tran)
+                    # ax = fig.add_subplot(2, 3, i+1)
+                    # ax.get_xaxis().set_visible(False)
+                    # ax.get_yaxis().set_visible(False)
+                    for coord, confidence, line_type in zip(coords, confidences, line_types):
+                        coord = coord * patch_size - patch_size/2 # [-30, -15, 30, 15]
+                        pts, pts_num = coord, coord.shape[0]
+                        zeros = np.zeros((pts_num, 1))
+                        ones = np.ones((pts_num, 1))
+                        world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
+                        pix_coords = perspective(world_coords, P)
+                        x = np.array([pts[0] for pts in pix_coords], dtype='int')
+                        y = np.array([pts[1] for pts in pix_coords], dtype='int')
+                        for j in range(1, x.shape[0]):
+                            img = cv2.line(img, (x[j-1], y[j-1]), (x[j], y[j]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
+                    if i > 2:
+                        img = cv2.flip(img, 1)
+                    img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
+                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 4, 4)
+                    text_w, text_h = text_size
+                    cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 255, 255), 4, cv2.LINE_AA)
+                    # ax.imshow(img)
+                    if i < 3:
+                        row_1_list.append(img)
+                    else:
+                        row_2_list.append(img)
+                    
+                row_1_img = cv2.hconcat(row_1_list)
+                row_2_img = cv2.hconcat(row_2_list)
+                surround = cv2.vconcat([row_1_img, row_2_img])
+                plt.imshow(surround)
+                # plt.subplots_adjust(wspace=0.0, hspace=0.0)
+                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                plt.close()
 
-                for coord in coords:
-                    coord = coord * dx + bx # [-30, -15, 30, 15]
-                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
-                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                '''Instance map'''
+                # impath = os.path.join(logdir, 'instance_pred')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
+                # imname = os.path.join(impath, f'{base_name}.png')
+                # print('saving', imname)
+
+                # fig = plt.figure(figsize=(4, 2))
+                # plt.xlim(-30, 30)
+                # plt.ylim(-15, 15)
+                # plt.axis('off')
+
+                # for coord in coords:
+                #     coord = coord * patch_size - patch_size/2 # [-30, -15, 30, 15]
+                #     plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
+                # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                # plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                # plt.close()
+                
+                '''Meta'''
+                impath = os.path.join(logdir, 'meta')
+                if not os.path.exists(impath):
+                    os.mkdir(impath)
+                imname = os.path.join(impath, f'{base_name}.jpg')
+                # print('saving', imname)
+
+                fig = plt.figure() # figsize=(8, 3)
+                plt.axis('off')
+                
+                images = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'images'), f'{base_name}.jpg')), cv2.COLOR_BGR2RGB) # rgb
+                pred = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'vector_pred_final'), f'{base_name}.png')), cv2.COLOR_BGR2RGB) # rgb
+                gt = cv2.cvtColor(cv2.imread(os.path.join(os.path.join(logdir, 'vector_gt'), f'{base_name}.png')), cv2.COLOR_BGR2RGB) # rgb
+                pred = cv2.rotate(pred, cv2.ROTATE_90_COUNTERCLOCKWISE) # rgb
+                gt = cv2.rotate(gt, cv2.ROTATE_90_COUNTERCLOCKWISE) # rgb
+                
+                target_h = images.shape[0]
+                source_h = pred.shape[0]
+                scale = target_h / source_h
+                pred = cv2.resize(pred, (0, 0), fx=scale, fy=scale)
+                gt = cv2.resize(gt, (0, 0), fx=scale, fy=scale)
+                
+                text_size, _ = cv2.getTextSize('pred', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
+                text_w, text_h = text_size
+                cv2.rectangle(pred, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                pred = cv2.putText(pred, 'pred', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+                
+                text_size, _ = cv2.getTextSize('gt', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
+                text_w, text_h = text_size
+                cv2.rectangle(gt, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+                gt = cv2.putText(gt, 'gt', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+                
+                meta = cv2.hconcat([images, pred, gt])
+                plt.imshow(meta)
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
                 
@@ -725,8 +776,8 @@ if __name__ == '__main__':
     parser.add_argument("--refine", action='store_false')
 
     # VectorMapNet config
-    parser.add_argument("--num_vectors", type=int, default=200) # 100 * 3 classes = 300 in total
-    parser.add_argument("--vertex_threshold", type=float, default=0.5)
+    parser.add_argument("--num_vectors", type=int, default=250) # 100 * 3 classes = 300 in total
+    parser.add_argument("--vertex_threshold", type=float, default=0.3)
     parser.add_argument("--feature_dim", type=int, default=256)
     parser.add_argument("--gnn_layers", type=int, default=7)
     parser.add_argument("--sinkhorn_iterations", type=int, default=100)

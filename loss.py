@@ -119,8 +119,8 @@ class GraphLoss(nn.Module):
                 # cposition: N 2
                 # cmask: N 1
                 cmask = cmask.squeeze(-1) # N
-                cposition_valid = cposition / (torch.tensor(self.nx, device=cposition.device)-1) # normalize 0~1, N 2
-                cposition_valid = cposition_valid[cmask == 1] # M 2; x, y
+                # cposition_valid = cposition / (torch.tensor(self.nx, device=cposition.device)-1) # normalize 0~1, N 2
+                cposition_valid = cposition[cmask == 1] # M 2; x, y
             
                 pts_list = []
                 pts_ins_list = []

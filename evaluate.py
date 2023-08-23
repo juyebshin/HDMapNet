@@ -41,6 +41,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
 
     dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
+    patch_size = np.array([row[1] - row[0] for row in [args.xbound, args.ybound]]) # [60, 30]
 
 
     if dt is not None:
@@ -92,7 +93,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         masks_bins = np.concatenate([masks, bins], 1) # 3 N+1
         vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # c N+1 N+1
-        positions = positions * dx + bx # c N 3; value [30, 60]
+        positions = positions * patch_size - patch_size/2 # c N 3; value [-30~30, -15~15]
         # positions_valid = positions[masks == 1] # c M 3
 
         # Vector prediction

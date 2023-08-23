@@ -17,7 +17,7 @@ def get_proj_mat(intrins, rots, trans):
 
 def perspective(cam_coords, proj_mat):
     pix_coords = proj_mat @ cam_coords
-    valid_idx = pix_coords[2, :] > 0
+    valid_idx = pix_coords[2, :] >= 1.0 # Discard depth less than 1.0, default: > 0
     pix_coords = pix_coords[:, valid_idx]
     pix_coords = pix_coords[:2, :] / (pix_coords[2, :] + 1e-7)
     pix_coords = pix_coords.transpose(1, 0)

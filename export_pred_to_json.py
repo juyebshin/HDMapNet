@@ -2,6 +2,7 @@ import argparse
 import mmcv
 import tqdm
 import torch
+import numpy as np
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
@@ -60,6 +61,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
     }
 
     dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
+    patch_size = np.array([row[1] - row[0] for row in [args.xbound, args.ybound]]) # [60, 30]
 
     model.eval()
     with torch.no_grad():
@@ -72,7 +74,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], masks[si], args.match_threshold)
                 vectors = []
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
-                    vector = {'pts': coord * dx + bx, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
+                    vector = {'pts': coord * patch_size - patch_size/2, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
                     vectors.append(vector)
                 rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
                 submission['results'][rec['token']] = vectors

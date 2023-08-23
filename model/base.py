@@ -570,7 +570,7 @@ class InstaGraM(nn.Module):
         graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # (b c) 256 N, (b c) L 4 N N
         # graph_cls = self.cls_head(graph_embedding) # (b c) 3, N]
         # if self.refine:
-        offset = torch.tanh(self.offset_head(graph_embedding)) # (b c) 2 N
+        offset = torch.sigmoid(self.offset_head(graph_embedding)) # (b c) 2 N [0, 1]
         graph_embedding = self.final_proj(graph_embedding) # (b c) 256 N
 
         # Adjacency matrix score as inner product of all nodes
@@ -604,8 +604,10 @@ class InstaGraM(nn.Module):
         # Refinement offset in pixel coordinate
         # if self.refine:
         _, h, w = distance.shape # (b c) 200 400
-        offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # (b c) N 2 [-cell_size ~ cell_size]
-        vertices = torch.clamp(vertices*self.cell_size + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
+        offset = offset.permute(0, 2, 1) # (b c) N 2 [0, 1]
+        grid_num = vertices.new_tensor([score_shape[2], score_shape[1]]) # 50 25
+        vertices = (vertices + offset) / grid_num # [0, 1] normalized
+        # vertices = torch.clamp(vertices*self.cell_size + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
         
         # Concat vertices and scores just for vectorization
         scores = torch.stack(scores).unsqueeze(-1) # (b c) N 1

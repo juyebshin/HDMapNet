@@ -174,7 +174,7 @@ def train(args):
 
             final_loss = var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match
             final_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
             # counter += 1
             t1 = time()
@@ -193,7 +193,8 @@ def train(args):
                             f"DT loss: {(dt_loss.item() if args.distance_reg else dt_loss):>7.4f}    "
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
-                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
+                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}    "
+                            f"grad_norm: {grad_norm.item():>7.4f}")
 
                 if writer is not None:
                     write_log(writer, iou, total_cdist, 'train', counter)
