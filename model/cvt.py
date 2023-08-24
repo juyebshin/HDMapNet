@@ -100,8 +100,8 @@ class BEVEmbedding(nn.Module):
 
         # bev coordinates
         grid = generate_grid(h, w).squeeze(0) # 3 h w
-        grid[0] = bev_width * grid[0] # 0 ~ 50
-        grid[1] = bev_height * grid[1] # 0 ~ 25
+        grid[0] = bev_width * grid[0] # 0 ~ 400
+        grid[1] = bev_height * grid[1] # 0 ~ 200
 
         # map from bev coordinates to ego frame
         V = get_view_matrix(bev_height, bev_width, h_meters, w_meters, offset)  # 3 3
