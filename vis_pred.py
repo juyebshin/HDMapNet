@@ -579,15 +579,15 @@ def vis_vectormapnet(model, val_loader, logdir, data_conf):
                 pred = cv2.resize(pred, (0, 0), fx=scale, fy=scale)
                 gt = cv2.resize(gt, (0, 0), fx=scale, fy=scale)
                 
-                text_size, _ = cv2.getTextSize('pred', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
+                text_size, _ = cv2.getTextSize('PRED', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
                 text_w, text_h = text_size
                 cv2.rectangle(pred, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                pred = cv2.putText(pred, 'pred', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+                pred = cv2.putText(pred, 'PRED', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
                 
-                text_size, _ = cv2.getTextSize('gt', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
+                text_size, _ = cv2.getTextSize('GT', cv2.FONT_HERSHEY_SIMPLEX, 2, 2)
                 text_w, text_h = text_size
                 cv2.rectangle(gt, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                gt = cv2.putText(gt, 'gt', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+                gt = cv2.putText(gt, 'GT', (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
                 
                 meta = cv2.hconcat([images, pred, gt])
                 plt.imshow(meta)

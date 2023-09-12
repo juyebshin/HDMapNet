@@ -351,21 +351,21 @@ class BevEncode(nn.Module):
         self.cell_size = cell_size
         if vertex_pred:
             self.vertex_head = nn.Sequential(
-                # b, 256, 100, 200
+                # b, 256, 100, 200; 200, 200
                 nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
-                # b, 128, 100, 200
+                # b, 128, 100, 200; 200, 200
                 norm_layer(256),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
-                # b, 256, 50, 100
+                # b, 256, 50, 100; 100, 100
                 nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False), # 65: cell_size*cell_size + 1 (dustbin)
-                # b, 128, 50, 100
+                # b, 128, 50, 100; 100, 100
                 norm_layer(128),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=2, stride=2),
-                # b, 128, 25, 50
+                # b, 128, 25, 50; 50, 50
                 nn.Conv2d(128, outC-1, kernel_size=1, padding=0), # three classes
-                # b, 3, 25, 50
+                # b, 3, 25, 50; 50, 50
             )
 
         self.instance_seg = instance_seg
@@ -392,24 +392,24 @@ class BevEncode(nn.Module):
                 nn.Conv2d(128, direction_dim, kernel_size=1, padding=0),
             )
 
-    def forward(self, x): # x: b, 64, 200, 400
-        x = self.conv1(x) # b, 64, 100, 200
+    def forward(self, x): # x: b, 64, 200, 400; 400, 400
+        x = self.conv1(x) # b, 64, 100, 200; 200, 200
         x = self.bn1(x)
         x = self.relu(x)
 
-        x1 = self.layer1(x) # b, 64, 100, 200
-        x = self.layer2(x1) # b, 128, 50, 100
-        x2 = self.layer3(x) # b, 256, 25, 50
+        x1 = self.layer1(x) # b, 64, 100, 200; 200, 200
+        x = self.layer2(x1) # b, 128, 50, 100; 100, 100
+        x2 = self.layer3(x) # b, 256, 25, 50; 50, 50
 
-        x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
+        x = self.up1(x2, x1) # b, 256, 100, 200; 200, 200, apply distance transform after here
 
         if self.vertex_pred:
-            x_vertex = self.vertex_head(x) # b, 3, 25, 50
+            x_vertex = self.vertex_head(x) # b, 3, 25, 50; 50, 50
         else:
             x_vertex = None
 
         if self.distance_reg:
-            x_dt = self.up_dt(x) # b, 3, 200, 400
+            x_dt = self.up_dt(x) # b, 3, 200, 400; 400, 400
             # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
             # concat [x, x_dt] and upsample to get dense semantic prediction
             if self.segmentation:
@@ -487,13 +487,13 @@ class InstaGraM(nn.Module):
 
     def forward(self, semantic, distance, vertex, instance, direction):
         """ semantic, instance, direction are not used
-        @ vertex: (b, 3, 25, 50)
-        @ distance: (b, 3, 200, 400)
+        @ vertex: (b, 3, 25, 50); (b, 3, 50, 50)
+        @ distance: (b, 3, 200, 400); (b, 3, 400, 400)
         """
 
         # Compute the dense vertices scores (heatmap)
-        scores = torch.sigmoid(vertex) # b c 25 50
-        b_org, c_org, _, _ = scores.shape # b c 25 50
+        scores = torch.sigmoid(vertex) # b c 25 50; 50, 50
+        b_org, c_org, _, _ = scores.shape # b c 25 50; 50, 50
         scores = rearrange(scores, 'b c ... -> (b c) ...') # (b c) 25 50
         # scores = scores[:, :-1] # b, 64, 25, 50
         # b, _, h, w = scores.shape # b, 64, 25, 50

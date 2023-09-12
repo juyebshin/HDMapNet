@@ -65,7 +65,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
         plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
         map_path = os.path.join(base_path, 'MAP.png')
-        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
+        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
         plt.close()
 
         # major_xticks = np.linspace(-30, 30, 51)
@@ -117,7 +117,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train=False):
             # plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
             plt.close()
     
-    with open('num_vectors_train_class.csv', 'w') as f:
+    with open('num_vectors_val_class_long_range.csv', 'w') as f:
         print('saving number of vectors list to csv...')
         write = csv.writer(f)
         num_vectors_list.insert(0, ['Frame', 'Divider', 'Ped. Crossing', 'Boundary'])
