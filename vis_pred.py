@@ -82,7 +82,7 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 plt.axis('off')
                 for coord in coords:
                     plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0)
-                plt.imshow(car_img, extent=[segmentation.shape[3]//2-15, segmentation.shape[3]//2+15, segmentation.shape[2]//2-12, segmentation.shape[2]//2+12])
+                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
                 imname = os.path.join(impath, f'{base_name}.jpg')
                 print('saving', imname)
