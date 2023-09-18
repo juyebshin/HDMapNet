@@ -395,7 +395,7 @@ class BevEncode(nn.Module):
                 nn.Conv2d(128, direction_dim, kernel_size=1, padding=0),
             )
 
-    def forward(self, x): # x: b, 64, 200, 400
+    def forward(self, x): # x: b, 64, 200, 400; 400, 400
         x = self.conv1(x) # b, 64, 100, 200
         x = self.bn1(x)
         x = self.relu(x)
@@ -407,12 +407,12 @@ class BevEncode(nn.Module):
         x = self.up1(x2, x1) # b, 256, 100, 200, apply distance transform after here
 
         if self.vertex_pred:
-            x_vertex = self.vertex_head(x) # b, 65, 25, 50
+            x_vertex = self.vertex_head(x) # b, 65, 25, 50; 50, 50
         else:
             x_vertex = None
 
         if self.distance_reg:
-            x_dt = self.up_dt(x) # b, 3, 200, 400
+            x_dt = self.up_dt(x) # b, 3, 200, 400; 400, 400
             # x: [b, 256, 100, 200], x_dt: [b, 3, 200, 400]
             # concat [x, x_dt] and upsample to get dense semantic prediction
             if self.segmentation:
@@ -490,21 +490,21 @@ class InstaGraM(nn.Module):
 
     def forward(self, semantic, distance, vertex, instance, direction):
         """ semantic, instance, direction are not used
-        @ vertex: (b, 65, 25, 50)
-        @ distance: (b, 3, 200, 400)
+        @ vertex: (b, 65, 25, 50); (..., 50, 50)
+        @ distance: (b, 3, 200, 400); (..., 400, 400)
         """
 
         # Compute the dense vertices scores (heatmap)
-        scores = F.softmax(vertex, 1) # (b, 65, 25, 50)
-        scores = scores[:, :-1] # b, 64, 25, 50
-        b, _, h, w = scores.shape # b, 64, 25, 50
-        mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50
+        scores = F.softmax(vertex, 1) # (b, 65, 25, 50); (..., 50, 50)
+        scores = scores[:, :-1] # b, 64, 25, 50; 50, 50
+        b, _, h, w = scores.shape # b, 64, 25, 50; 50, 50
+        mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50; 50, 50
         scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
-        scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50
+        scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50; 50, 50
         scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
         scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
-        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400
-        score_shape = scores_max.shape # b, 200, 400
+        scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400; 400, 400
+        score_shape = scores_max.shape # b, 200, 400; 400, 400
 
         # scores = scores[:, :-1].permute(0, 2, 3, 1) # b, 25, 50, 64
         # scores[scores < self.vertex_threshold] = 0.0

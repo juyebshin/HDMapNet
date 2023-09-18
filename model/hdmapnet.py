@@ -56,12 +56,12 @@ class HDMapNet(nn.Module):
         fv_size = (data_conf['image_size'][0]//self.downsample, data_conf['image_size'][1]//self.downsample)
         # fv_size: (8, 22)
         bv_size = (final_H//5, final_W//5)
-        # bv_size: 0.15: (40, 80), 0.3: (20, 40), 0.6: (10, 20)
+        # bv_size: 0.15: (40, 80), 0.3: (20, 40), 0.6: (10, 20); long: (80, 80)
         self.view_fusion = ViewTransformation(fv_size=fv_size, bv_size=bv_size)
 
-        res_x = bv_size[1] * 3 // 4 # 0.15: 80*3 // 4 = 60, 0.3: 30, 0.6: 15
-        ipm_xbound = [-res_x, res_x, 4*res_x/final_W] # 0.15: [-60, 60, 0.6], 0.3: [-30, 30, 0.6], 0.6: [-15, 15, 0.6]
-        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H] # 0.15: [-30, 30, 0.6], 0.3: [-15, 15, 0.6], 0.6: [-7.5, 7.5, 0.6]
+        res_x = bv_size[1] * 3 // 4 # 0.15: 80*3 // 4 = 60, 0.3: 30, 0.6: 15; long: 80*3 // 4 = 60
+        ipm_xbound = [-res_x, res_x, 4*res_x/final_W] # 0.15: [-60, 60, 0.6], 0.3: [-30, 30, 0.6], 0.6: [-15, 15, 0.6]; long: [-60, 60, 0.6]
+        ipm_ybound = [-res_x/2, res_x/2, 2*res_x/final_H] # 0.15: [-30, 30, 0.6], 0.3: [-15, 15, 0.6], 0.6: [-7.5, 7.5, 0.6]; long: [-60, 60, 0.6]
         self.ipm = IPM(ipm_xbound, ipm_ybound, N=6, C=self.camC, extrinsic=True)
         self.up_sampler = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         # self.up_sampler = nn.Upsample(scale_factor=5, mode='bilinear', align_corners=True)
@@ -103,8 +103,8 @@ class HDMapNet(nn.Module):
         Ks, RTs, post_RTs = self.get_Ks_RTs_and_post_RTs(intrins, rots, trans, post_rots, post_trans)
         # Ks: batch, 6, eye(4, 4), RTs: batch, 6, RT(4, 4), post_RTs: None
         # RTs: ego to camera coordinate
-        topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs) # b, 64, 100, 200
-        topdown = self.up_sampler(topdown) # b, 64, 200, 400
+        topdown = self.ipm(x, Ks, RTs, car_trans, yaw_pitch_roll, post_RTs) # b, 64, 100, 200; 200, 200
+        topdown = self.up_sampler(topdown) # b, 64, 200, 400; 400, 400
         if self.lidar:
             lidar_feature = self.pp(lidar_data, lidar_mask)
             topdown = torch.cat([topdown, lidar_feature], dim=1)

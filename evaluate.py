@@ -101,7 +101,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         positions_valid = positions[masks == 1] # [M, 3]
 
         # Vector prediction
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
@@ -124,7 +124,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/vector_pred', fig, step)
         plt.close()
 
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
@@ -165,7 +165,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.close()
 
         # Aligned GT matches
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
@@ -187,7 +187,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/match_aligned', fig, step)
         plt.close()
 
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
@@ -210,7 +210,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         semantic_gt_onehot = semantic_gt.argmax(0)[masks == 1] # [M]
 
         # Semantic prediction
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
@@ -220,7 +220,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         plt.close()
         
         # Semantic gt
-        fig = plt.figure(figsize=(4, 2))
+        fig = plt.figure()
         plt.xlim(args.xbound[0], args.xbound[1])
         plt.ylim(args.ybound[0], args.ybound[1])
         plt.axis('off')
