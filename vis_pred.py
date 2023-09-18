@@ -72,22 +72,22 @@ def vis_vector(model, val_loader, angle_class, logdir):
                 base_name = lidar_top_path.split('/')[-1].replace('__LIDAR_TOP__', '_').split('.')[0].split('_')[-1] # timestamp
                 base_name = scene_name + '_' + base_name # {scene_name}_{timestamp}
                 
-                impath = os.path.join(logdir, 'instance')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
+                # impath = os.path.join(logdir, 'instance')
+                # if not os.path.exists(impath):
+                #     os.mkdir(impath)
 
-                fig = plt.figure(figsize=(4, 2))
-                plt.xlim((0, segmentation.shape[3]))
-                plt.ylim((0, segmentation.shape[2]))
-                plt.axis('off')
-                for coord in coords:
-                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0)
-                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                # fig = plt.figure(figsize=(4, 2))
+                # plt.xlim((0, segmentation.shape[3]))
+                # plt.ylim((0, segmentation.shape[2]))
+                # plt.axis('off')
+                # for coord in coords:
+                #     plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0)
+                # plt.imshow(car_img, extent=[segmentation.shape[3]//2-10, segmentation.shape[3]//2+10, segmentation.shape[2]//2-8, segmentation.shape[2]//2+8])
 
-                imname = os.path.join(impath, f'{base_name}.jpg')
-                print('saving', imname)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                plt.close()
+                # imname = os.path.join(impath, f'{base_name}.jpg')
+                # print('saving', imname)
+                # plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+                # plt.close()
                 
                 impath = os.path.join(logdir, 'vector')
                 if not os.path.exists(impath):
@@ -101,7 +101,7 @@ def vis_vector(model, val_loader, angle_class, logdir):
                     # plt.plot(coord[:, 0], coord[:, 1], linewidth=5)
                     plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
                     plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
-                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+                plt.imshow(car_img, extent=[segmentation.shape[3]//2-10, segmentation.shape[3]//2+10, segmentation.shape[2]//2-8, segmentation.shape[2]//2+8])
 
                 imname = os.path.join(impath, f'{base_name}.jpg')
                 print('saving', imname)
