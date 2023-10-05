@@ -7,7 +7,7 @@ import argparse
 import numpy as np
 import cv2
 from PIL import Image
-from time import time
+import time
 
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
@@ -29,17 +29,15 @@ def gen_dx_bx(xbound, ybound):
     nx = [(row[1] - row[0]) / row[2] for row in [xbound, ybound]] # [400, 200]
     return dx, bx, nx
 
-def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
+def test(dataset: HDMapNetDataset, model, args, data_conf):
     dx, bx, nx = gen_dx_bx(data_conf['xbound'], data_conf['ybound'])
     car_img = Image.open('icon/car.png')
     img_size = data_conf['image_size'] # [128, 352]
     intrin_scale = torch.tensor([img_size[1] / 1600., img_size[0] / 900., 1.0]) * torch.eye(3)
 
-    model_time_list = []
-    post_time_list = []
-    total_time_list = []
-
-    start, mid, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    model_time_sum = 0
+    post_time_sum = 0
+    total_time_sum = 0
     
     model.eval()
     with torch.no_grad():
@@ -85,25 +83,29 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
             car_trans = car_trans.unsqueeze(0) # [1, 3]
             yaw_pitch_roll = yaw_pitch_roll.unsqueeze(0) # [1, 3]
 
-            start.record()
+            torch.cuda.synchronize()
+            start_time = time.perf_counter()
             semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
-            mid.record()
-            coords, confidences, line_types = vectorize_graph(positions[0], matches[0], semantic[0], masks[0], data_conf['match_threshold'])
-            end.record()
+            
             torch.cuda.synchronize()
+            mid_time = time.perf_counter()
+            coords, confidences, line_types = vectorize_graph(positions[0], matches[0], semantic[0], masks[0], data_conf['match_threshold'])
+            
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
 
-            model_time = start.elapsed_time(mid) * 0.001
-            post_time = mid.elapsed_time(end) * 0.001
-            total_time = start.elapsed_time(end) * 0.001
+            model_time = mid_time - start_time
+            post_time = end_time - mid_time
+            total_time = end_time - start_time
 
-            model_time_list.append(model_time)
-            post_time_list.append(post_time)
-            total_time_list.append(total_time)
+            model_time_sum += model_time
+            post_time_sum += post_time
+            total_time_sum += total_time
 
-            if vis:
-                impath = os.path.join(logdir, 'images')
+            if args.vis:
+                impath = os.path.join(args.logdir, 'images')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.jpg')
@@ -142,7 +144,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 plt.close()
 
                 # Vector map
-                impath = os.path.join(logdir, 'vector_pred_final')
+                impath = os.path.join(args.logdir, 'vector_pred_final')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.png')
@@ -166,7 +168,7 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 plt.close()
 
                 # Instance map
-                impath = os.path.join(logdir, 'instance_pred')
+                impath = os.path.join(args.logdir, 'instance_pred')
                 if not os.path.exists(impath):
                     os.mkdir(impath)
                 imname = os.path.join(impath, f'{base_name}.png')
@@ -183,12 +185,21 @@ def test(dataset: HDMapNetDataset, model, logdir, data_conf, vis=False):
                 plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
                 plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
                 plt.close()
-
-    model_fps = 1/np.array(model_time_list).mean()
-    post_fps = 1/np.array(post_time_list).mean()
-    total_fps = 1/np.array(total_time_list).mean()
-
-    print(f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}')
+                
+            if (idx + 1) % args.log_interval == 0:
+                model_fps = (idx + 1) / model_time_sum
+                post_fps = (idx + 1) / post_time_sum
+                total_fps = (idx + 1) / total_time_sum
+                print(f'Done image [{idx + 1:<3}/ {args.samples}], ',
+                      f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}')
+                
+            if (idx + 1) == args.samples:
+                model_fps = (idx + 1) / model_time_sum
+                post_fps = (idx + 1) / post_time_sum
+                total_fps = (idx + 1) / total_time_sum
+                print('Overall: '
+                      f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}')
+                break
 
 def main(args):
     data_conf = {
@@ -228,7 +239,7 @@ def main(args):
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
 
-    test(dataset, model, args.logdir, data_conf, args.vis)
+    test(dataset, model, args, data_conf)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -255,6 +266,8 @@ if __name__ == '__main__':
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
     parser.add_argument("--sample_dist", type=float, default=1.5) # 1.5
     parser.add_argument("--vis", action='store_true')
+    parser.add_argument("--samples", type=int, default=2000)
+    parser.add_argument("--log-interval", type=int, default=50)
 
     # embedding config
     parser.add_argument("--embedding_dim", type=int, default=16)
