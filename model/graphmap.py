@@ -148,6 +148,18 @@ def log_optimal_transport(scores, alpha, iters: int):
     Z = Z - norm  # multiply probabilities by M+N
     return Z
 
+def log_double_softmax(sim: torch.Tensor, z0: torch.Tensor, z1: torch.Tensor):
+    """ Perform double softmax in log-space """
+    b, m, n = sim.shape # b, N, N
+    certainties = F.logsigmoid(z0) + F.logsigmoid(z1).transpose(1, 2).contiguous() # [b, N, N]
+    scores0 = torch.log_softmax(sim, 2)
+    scores1 = torch.log_softmax(sim.transpose(-1, -2).contiguous(), 2).transpose(-1, -2).contiguous()
+    scores = sim.new_full((b, m+1, n+1), 0)
+    scores[:, :m, :n] = scores0 + scores1 + certainties
+    scores[:, :-1, -1] = F.logsigmoid(-z0.squeeze(-2))
+    scores[:, -1, :-1] = F.logsigmoid(-z1.squeeze(-2))
+    return scores
+
 # Positional embedding from NeRF: https://github.com/bmild/nerf/blob/18b8aebda6700ed659cb27a0c348b737a5f6ab60/run_nerf_helpers.py
 def get_embedder(multires, i=0):
 

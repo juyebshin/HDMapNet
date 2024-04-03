@@ -12,7 +12,7 @@ def gen_dx_bx(xbound, ybound):
     return dx, bx, nx
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=1, gamma=2, reduce='mean'):
+    def __init__(self, alpha=0.25, gamma=2.0, reduce='mean'):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -78,7 +78,7 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, reduction='mean', cost_class:float=1.0, cost_dist:float=5.0) -> None:
+    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, reduction='mean', cost_class:float=4.0, cost_dist:float=50.0) -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
@@ -87,8 +87,11 @@ class GraphLoss(nn.Module):
         self.cdist_threshold = np.linalg.norm(cdist_threshold / (2*self.bound)) # norlamize distance threshold in meter / 45.0
         self.reduction = reduction
 
-        self.ce_fn = torch.nn.CrossEntropyLoss()
-        self.nll_fn = torch.nn.NLLLoss()
+        self.cost_class = cost_class
+        self.cost_dist = cost_dist
+
+        self.match_loss = torch.nn.CrossEntropyLoss()
+        self.cls_loss = FocalLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N+1, N+1]
@@ -113,7 +116,7 @@ class GraphLoss(nn.Module):
             mask = mask.squeeze(-1) # [N,]
             position_valid = position / (torch.tensor(self.nx, device=position.device)-1) # normalize 0~1, [N, 2]
             position_valid = position_valid[mask == 1] # [M, 2] x, y
-            semantic_valid = semantic[:, mask == 1] # [4, M]
+            semantic_valid = semantic[:, mask == 1] # [3, M]
             
             pts_list = []
             pts_ins_list = []
@@ -135,10 +138,12 @@ class GraphLoss(nn.Module):
             if len(position_gt) > 0 and len(position_valid) > 0:
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
+                # cost_class = -semantic_valid.permute(1, 0).contiguous()[:, pts_type_list] # [M, P]
+                # cost = self.cost_class * cost_class + self.cost_dist * cdist # [M, P]
                 nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
 
                 if len(nearest) > 1: # at least two vertices
-                    nearest_ins = []
+                    nearest_ins = [] # length (M)
                     for n, d in zip(nearest, nearest_dist):
                         nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
                     for i in range(max(nearest_ins)+1): # for all instance IDs
@@ -179,28 +184,29 @@ class GraphLoss(nn.Module):
                     assert torch.max(match_gt_valid[:, :-1].sum(0)) == 1, f"maximum value of col-wise sum expected 1, but got: {torch.max(match_gt_valid[:, :-1].sum(0))}"
 
                     # add minibatch dimension and class first
-                    match_valid = match_valid.unsqueeze(0).transpose(1, 2) # [1, M+1, M+1] class dim first
+                    match_valid = match_valid.unsqueeze(0).transpose(1, 2).contiguous() # [1, M+1, M+1] class dim first
                     match_gt_valid = match_gt_valid.unsqueeze(0) # [1, M+1, M+1]
 
                     # backward col -> row
                     match_gt_valid_backward = match_gt_valid.argmax(1) # col -> row [1, M+1]
-                    match_loss_backward = self.nll_fn(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
+                    match_loss_backward = self.match_loss(match_valid[..., :-1], match_gt_valid_backward[..., :-1])
 
                     # forward row -> col
                     # match_valid = match_valid.transpose(1, 2) # [1, M+1, M+1]
                     match_gt_valid_forward = match_gt_valid.argmax(2) # row -> col [1, M+1]
-                    match_loss_forward = self.nll_fn(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
+                    match_loss_forward = self.match_loss(match_valid[..., :-1], match_gt_valid_forward[..., :-1])
 
                     match_loss = (match_loss_forward + match_loss_backward)
                     # match_loss = match_loss_forward
 
                     semantic_valid = semantic[:, mask == 1].unsqueeze(0) # [1, 3, M]
                     semantic_gt_valid = semantic_gt[:, mask == 1].unsqueeze(0) # [1, 3, M]
+                    # ensure one-hot encoding
                     assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
                     assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
-                    semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
+                    # semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
 
-                    semantic_loss = self.nll_fn(semantic_valid, semantic_gt_valid)
+                    semantic_loss = self.cls_loss(semantic_valid, semantic_gt_valid)
 
                     coord_loss = F.l1_loss(position_valid, position_gt[nearest])                
                 else:

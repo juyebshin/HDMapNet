@@ -101,7 +101,7 @@ def vectorize(segmentation, embedding, direction, angle_class):
 
     return simplified_coords, confidences, line_types
 
-def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: torch.Tensor, mask: torch.Tensor, match_threshold=0.1):
+def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: torch.Tensor, mask: torch.Tensor, cls_threshold=0.5, match_threshold=0.1):
     """ Vectorize from graph representations
 
     Parameters
@@ -139,9 +139,9 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     t2mat = match.new_full(match[:-1, :-1].shape, 0, dtype=torch.bool)
     t2mat = t2mat.scatter_(1, t2indices, 1) # [M, M]
     adj_mat = adj_mat & t2mat # [M, M]
-    segmentation = segmentation.exp() # [4, N]
-    seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [4, M] 0, 1, 2, 3
-    segmentation = segmentation.cpu().numpy()[:, mask == 1] # [4, M]
+    segmentation = torch.sigmoid(segmentation) # [3, N]
+    seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [3, M] 0, 1, 2
+    segmentation = segmentation.cpu().numpy()[:, mask == 1] # [3, M]
     
     for i in range(seg_onehot.shape[0]): # 0, 1, 2
         single_mask = np.expand_dims(seg_onehot[i].astype('uint8'), 1) # [M, 1]

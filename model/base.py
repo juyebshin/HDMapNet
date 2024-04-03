@@ -480,8 +480,11 @@ class InstaGraM(nn.Module):
         self.gnn = AttentionalGNN(self.feature_dim, ['self']*self.gnn_layers, norm_layer)
         self.final_proj = nn.Conv1d(self.feature_dim, self.feature_dim, kernel_size=1, bias=True)
 
-        bin_score = nn.Parameter(torch.tensor(1.))
-        self.register_parameter('bin_score', bin_score)
+        if self.sinkhorn_iters > 0:
+            bin_score = nn.Parameter(torch.tensor(1.))
+            self.register_parameter('bin_score', bin_score)
+        else:
+            self.matchability = nn.Conv1d(self.feature_dim, 1, kernel_size=1, bias=True)
 
         # self.gcn = GCN(self.feature_dim, 512, self.num_classes, 0.5)
         self.cls_head = nn.Conv1d(self.feature_dim, self.num_classes-1, kernel_size=1, bias=True)
@@ -501,8 +504,8 @@ class InstaGraM(nn.Module):
         mvalues, mindicies = scores.max(1, keepdim=True) # b, 1, 25, 50; 50, 50
         scores_max = scores.new_full(scores.shape, 0., dtype=scores.dtype)
         scores_max = scores_max.scatter_(1, mindicies, mvalues) # b, 64, 25, 50; 50, 50
-        scores_max = scores_max.permute(0, 2, 3, 1).reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
-        scores_max = scores_max.permute(0, 1, 3, 2, 4).reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
+        scores_max = scores_max.permute(0, 2, 3, 1).contiguous().reshape(b, h, w, self.cell_size, self.cell_size) # b, 25, 50, 64 -> b, 25, 50, 8, 8
+        scores_max = scores_max.permute(0, 1, 3, 2, 4).contiguous().reshape(b, h*self.cell_size, w*self.cell_size) # b, 25, 8, 50, 8 -> b, 200, 400
         scores_max = simple_nms(scores_max, int(self.cell_size*0.5)) # b, 200, 400; 400, 400
         score_shape = scores_max.shape # b, 200, 400; 400, 400
 
@@ -565,10 +568,10 @@ class InstaGraM(nn.Module):
         # graph_embedding = self.dtenc(dt_embedding) # temp
         # masks = masks.transpose(1, 2) # [b, 1, N]
         graph_embedding = self.gnn(graph_embedding, masks.transpose(1, 2)) # [b, 256, N], [b, L, 4, N, N]
+        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
         graph_cls = self.cls_head(graph_embedding) # [b, 3, N]
         if self.refine:
             offset = torch.tanh(self.offset_head(graph_embedding)) # [b, 2, N]
-        graph_embedding = self.final_proj(graph_embedding) # [b, 256, N]
 
         # Adjacency matrix score as inner product of all nodes
         matches = torch.einsum('bdn,bdm->bnm', graph_embedding, graph_embedding)
@@ -587,25 +590,27 @@ class InstaGraM(nn.Module):
         if self.sinkhorn_iters > 0:
             matches = log_optimal_transport(matches, self.bin_score, self.sinkhorn_iters) # [b, N+1, N+1]
         else:
-            bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
-            bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
-            alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
-            matches = torch.cat( # [b, N+1, N+1]
-            [
-                torch.cat([matches, bins0], -1), # [b, N, N+1]
-                torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
-            ], 1)
-            matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
+            # bins0 = self.bin_score.expand(b, m, 1) # [b, N, 1]
+            # bins1 = self.bin_score.expand(b, 1, n) # [b, 1, N]
+            # alpha = self.bin_score.expand(b, 1, 1) # [b, 1, 1]
+            # matches = torch.cat( # [b, N+1, N+1]
+            # [
+            #     torch.cat([matches, bins0], -1), # [b, N, N+1]
+            #     torch.cat([bins1, alpha], -1)   # [b, 1, N+1]
+            # ], 1)
+            # matches = F.log_softmax(matches, -1) # [b, N+1, N+1]
+            z0 = self.matchability(graph_embedding) # [b, 1, N]
+            matches = log_double_softmax(matches, z0, z0) # [b, N+1, N+1]
         # matches.exp() should be probability
 
         # Refinement offset in pixel coordinate
         if self.refine:
             _, h, w = score_shape
-            offset = offset.permute(0, 2, 1)*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
+            offset = offset.permute(0, 2, 1).contiguous()*offset.new_tensor([self.cell_size, self.cell_size]) # [b, N, 2] [-cell_size ~ cell_size]
             vertices = torch.clamp(vertices + offset, max=offset.new_tensor([w-1, h-1]), min=offset.new_tensor([0, 0]))
 
         # graph_cls = self.gcn(graph_embedding.transpose(1, 2), matches[:, :-1, :-1].exp()) # [b, N, num_classes]
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, 1), distance, vertex, instance, direction, (matches), vertices, masks
+        return graph_cls, distance, vertex, instance, direction, (matches), vertices, masks

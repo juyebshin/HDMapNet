@@ -119,7 +119,7 @@ class LiftSplat(nn.Module):
         x = x.view(B*N, C, imH, imW)
         x = self.camencode(x) # B*N, C*D, h, w
         x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample) # B, N, C, D, h, w
-        x = x.permute(0, 1, 3, 4, 5, 2)
+        x = x.permute(0, 1, 3, 4, 5, 2).contiguous()
 
         return x # B, N, D(=41), h, w, C(=64)
 
