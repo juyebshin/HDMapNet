@@ -47,6 +47,7 @@ def train(args):
     # logger.addHandler(logging.StreamHandler(sys.stdout))
 
     logger = data.logger.setup_logger('vectorized map learning', args.logdir, utils.is_main_process(), "results.log")
+    logger.info(args)
 
     data_conf = {
         'num_channels': NUM_CLASSES + 1, # 4
@@ -90,6 +91,7 @@ def train(args):
     
     model_without_ddp = model
     if args.distributed:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
@@ -265,7 +267,7 @@ if __name__ == '__main__':
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
-    parser.add_argument("--backbone", type=str, default='efficientnet-b0',
+    parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
