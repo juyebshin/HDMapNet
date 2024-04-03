@@ -1,10 +1,179 @@
 import numpy as np
 from nuscenes.map_expansion.map_api import NuScenesMap, NuScenesMapExplorer
 from nuscenes.eval.common.utils import quaternion_yaw, Quaternion
-from shapely import affinity, ops
-from shapely.geometry import LineString, box, MultiPolygon, MultiLineString
+from shapely import affinity, ops, strtree
+from shapely.geometry import LineString, box, MultiPolygon, MultiLineString, Polygon, LinearRing
+from shapely.geometry.base import BaseGeometry
+from typing import List, Optional
+from scipy.spatial import distance
 
 from .const import CLASS2LABEL
+
+def split_collections(geom: BaseGeometry) -> List[Optional[BaseGeometry]]:
+    ''' Split Multi-geoms to list and check is valid or is empty.
+        
+    Args:
+        geom (BaseGeometry): geoms to be split or validate.
+    
+    Returns:
+        geometries (List): list of geometries.
+    '''
+    assert geom.geom_type in ['MultiLineString', 'LineString', 'MultiPolygon', 
+        'Polygon', 'GeometryCollection'], f"got geom type {geom.geom_type}"
+    if 'Multi' in geom.geom_type:
+        outs = []
+        for g in geom.geoms:
+            if g.is_valid and not g.is_empty:
+                outs.append(g)
+        return outs
+    else:
+        if geom.is_valid and not geom.is_empty:
+            return [geom,]
+        else:
+            return []
+        
+def get_angles(vec_1, vec_2):
+    """
+    return the angle, in degrees, between two vectors
+    """
+    
+    dot = np.dot(vec_1, vec_2)
+    det = np.cross(vec_1,vec_2)
+    angle_in_rad = np.arctan2(det,dot)
+    return np.degrees(angle_in_rad)
+
+
+def simplify_by_angle(poly_in, deg_tol = 1):
+    """
+    try to remove persistent coordinate points that remain after
+    simplify, convex hull, or something, etc. with some trig instead
+    params:
+    poly_in: shapely Polygon 
+    deg_tol: degree tolerance for comparison between successive vectors
+    return: 'simplified' polygon
+    
+    """
+    
+    ext_poly_coords = poly_in.exterior.coords[:]
+    vector_rep = np.diff(ext_poly_coords,axis = 0)
+    angles_list = []
+    for i in range(0,len(vector_rep) -1 ):
+        angles_list.append(np.abs(get_angles(vector_rep[i],vector_rep[i+1])))
+    
+#   get mask satisfying tolerance
+    thresh_vals_by_deg = np.where(np.array(angles_list) > deg_tol)
+    
+#   gotta be a better way to do this next part
+#   sandwich betweens first and last points
+    new_idx = [0] + (thresh_vals_by_deg[0] + 1).tolist() + [0]
+    new_vertices = [ext_poly_coords[idx] for idx in new_idx]
+    
+
+    return Polygon(new_vertices)
+
+def get_ped_crossing_contour(polygon: Polygon, 
+                             local_patch: box) -> Optional[LineString]:
+    ''' Extract ped crossing contours to get a closed polyline.
+    Different from `get_drivable_area_contour`, this function ensures a closed polyline.
+
+    Args:
+        polygon (Polygon): ped crossing polygon to be extracted.
+        local_patch (tuple): local patch params
+    
+    Returns:
+        line (LineString): a closed line
+    '''
+
+    ext = polygon.exterior
+    if not ext.is_ccw:
+        ext = LinearRing(list(ext.coords)[::-1])
+    lines = ext.intersection(local_patch)
+    if lines.type != 'LineString':
+        # remove points in intersection results
+        lines = [l for l in lines.geoms if l.geom_type != 'Point']
+        lines = ops.linemerge(lines)
+        
+        # same instance but not connected.
+        if lines.type != 'LineString':
+            ls = []
+            for l in lines.geoms:
+                ls.append(np.array(l.coords))
+            
+            lines = np.concatenate(ls, axis=0)
+            lines = LineString(lines)
+
+        start = list(lines.coords[0])
+        end = list(lines.coords[-1])
+        if not np.allclose(start, end, atol=1e-3):
+            new_line = list(lines.coords)
+            new_line.append(start)
+            lines = LineString(new_line) # make ped cross closed
+
+    if not lines.is_empty:
+        return lines
+    
+    return None
+
+def connect_lines(lines: List[LineString]) -> List[LineString]:
+    ''' Some dividers are split into multiple small parts
+    so we need to connect these lines.
+
+    Args:
+        dividers (list): list of dividers
+        boundaries (list): list of boundaries
+
+    Returns:
+        left_dividers (list): list of left dividers
+    '''
+
+    new_lines = []
+    eps = 2.0 # threshold to identify continuous lines
+    deg_eps = 5.0
+    while len(lines) > 1:
+        line1 = lines[0]
+        merged_flag = False
+        for i, line2 in enumerate(lines[1:]):
+            # hand-crafted rule
+            begin1 = list(line1.coords)[0]
+            end1 = list(line1.coords)[-1]
+            begin2 = list(line2.coords)[0]
+            end2 = list(line2.coords)[-1]
+
+            vec1 = np.diff(line1.coords[:], axis=0)
+            vec2 = np.diff(line2.coords[:], axis=0)
+            angle = np.abs(get_angles(vec1[0], vec2[0]))
+
+            #   begin1  end1    begin2  end2
+            #      -------        -------
+
+            if angle > deg_eps:
+                continue
+            dist_matrix = distance.cdist([begin1, end1], [begin2, end2])
+            if dist_matrix[0, 0] < eps: # begin1, begin2
+                coords = [end1, end2] # list(line2.coords)[::-1] + list(line1.coords)
+            elif dist_matrix[0, 1] < eps: # begin1, end2
+                coords = [end1, begin2] # list(line2.coords) + list(line1.coords)
+            elif dist_matrix[1, 0] < eps: # end1, begin2
+                coords = [begin1, end2] # list(line1.coords) + list(line2.coords)
+            elif dist_matrix[1, 1] < eps: # end1, end2
+                coords = [begin1, begin2] # list(line1.coords) + list(line2.coords)[::-1]
+            else: continue
+
+            new_line = LineString(coords)
+            lines.pop(i + 1)
+            lines[0] = new_line
+            merged_flag = True
+            break
+        
+        if merged_flag: continue
+
+        new_lines.append(line1)
+        lines.pop(0)
+
+    if len(lines) == 1:
+        new_lines.append(lines[0])
+
+    return new_lines
 
 class VectorizedLocalMap(object):
     def __init__(self,
@@ -176,6 +345,57 @@ class VectorizedLocalMap(object):
             results.append(lines)
 
         return self._one_type_line_geom_to_vectors(results)
+    
+    def _union_ped(self, ped_geoms: List[Polygon]) -> List[Polygon]:
+        ''' merge close ped crossings.
+        
+        Args:
+            ped_geoms (list): list of Polygon
+        
+        Returns:
+            union_ped_geoms (Dict): merged ped crossings 
+        '''
+
+        def get_rec_direction(geom):
+            rect = geom.minimum_rotated_rectangle
+            rect_v_p = np.array(rect.exterior.coords)[:3]
+            rect_v = rect_v_p[1:]-rect_v_p[:-1]
+            v_len = np.linalg.norm(rect_v, axis=-1)
+            longest_v_i = v_len.argmax()
+
+            return rect_v[longest_v_i], v_len[longest_v_i]
+
+        tree = strtree.STRtree(ped_geoms)
+        index_by_id = dict((id(pt), i) for i, pt in enumerate(ped_geoms))
+
+        final_pgeom = []
+        remain_idx = [i for i in range(len(ped_geoms))]
+        for i, pgeom in enumerate(ped_geoms):
+
+            if i not in remain_idx:
+                continue
+            # update
+            remain_idx.pop(remain_idx.index(i))
+            pgeom_v, pgeom_v_norm = get_rec_direction(pgeom)
+            final_pgeom.append(pgeom)
+
+            for o in tree.query(pgeom):
+                o_idx = index_by_id[id(o)]
+                if o_idx not in remain_idx:
+                    continue
+
+                o_v, o_v_norm = get_rec_direction(o)
+                cos = pgeom_v.dot(o_v)/(pgeom_v_norm*o_v_norm)
+                if 1 - np.abs(cos) < 0.01:  # theta < 8 degrees.
+                    final_pgeom[-1] =\
+                        final_pgeom[-1].union(o)
+                    # update
+                    remain_idx.pop(remain_idx.index(o_idx))
+
+        results = []
+        for p in final_pgeom:
+            results.extend(split_collections(p))
+        return results
 
     def get_ped_crossing_line(self, patch_box, patch_angle, location):
         def add_line(poly_xy, idx, patch, patch_angle, patch_x, patch_y, line_list):
@@ -189,6 +409,7 @@ class VectorizedLocalMap(object):
 
         patch_x = patch_box[0]
         patch_y = patch_box[1]
+        local_patch = box(-self.patch_size[1] / 2, -self.patch_size[0] / 2, self.patch_size[1] / 2, self.patch_size[0] / 2)
 
         patch = NuScenesMapExplorer.get_patch_coord(patch_box, patch_angle)
         line_list = []
@@ -201,6 +422,26 @@ class VectorizedLocalMap(object):
 
             add_line(poly_xy, x1, patch, patch_angle, patch_x, patch_y, line_list)
             add_line(poly_xy, x2, patch, patch_angle, patch_x, patch_y, line_list)
+
+        # line_list = list(ops.linemerge(line_list).geoms)
+        line_list = connect_lines(line_list)
+        return line_list
+
+        peds = self.map_explorer[location]._get_layer_polygon(patch_box, patch_angle, 'ped_crossing')
+        peds = self._union_ped(peds)
+        for ped in peds:
+            # polygon = self.map_explorer[location].extract_polygon(record['polygon_token'])
+            # ped = simplify_by_angle(ped.simplify(0.2), 5)
+            ped = get_ped_crossing_contour(ped, local_patch)
+            line_list.append(ped.simplify(0.2))
+            # ped = Polygon(ped.coords)
+            # ped = simplify_by_angle(ped, 1)
+            # poly_xy = np.array(ped.exterior.xy)
+            # dist = np.square(poly_xy[:, 1:] - poly_xy[:, :-1]).sum(0)
+            # x1, x2 = np.argsort(dist)[-2:]
+
+            # add_line(poly_xy, x1, patch, patch_angle, patch_x, patch_y, line_list)
+            # add_line(poly_xy, x2, patch, patch_angle, patch_x, patch_y, line_list)
 
         return line_list
 
