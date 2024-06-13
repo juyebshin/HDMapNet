@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 def gen_dx_bx(xbound, ybound):
     dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
@@ -78,20 +79,21 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, reduction='mean', cost_class:float=4.0, cost_dist:float=50.0) -> None:
+    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, num_classes=3, reduction='mean', cost_class:float=4.0, cost_dist:float=50.0) -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
         self.dx, self.bx, self.nx = gen_dx_bx(xbound, ybound)
         self.bound = (np.array(self.dx)/2 - np.array(self.bx)) # [30.0, 15.0]
         self.cdist_threshold = np.linalg.norm(cdist_threshold / (2*self.bound)) # norlamize distance threshold in meter / 45.0
+        self.num_classes = num_classes
         self.reduction = reduction
 
         self.cost_class = cost_class
         self.cost_dist = cost_dist
 
-        self.match_loss = torch.nn.CrossEntropyLoss()
-        self.cls_loss = FocalLoss()
+        self.match_loss = torch.nn.NLLLoss()
+        self.cls_loss = torch.nn.NLLLoss() # FocalLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N+1, N+1]
@@ -134,6 +136,7 @@ class GraphLoss(nn.Module):
             position_gt = torch.tensor(np.array(pts_list), device=position.device).float() # [P, 2] shaped tensor
             match_gt = torch.zeros_like(match) # [N+1, N+1]
             semantic_gt = torch.zeros_like(semantic) # [3, N]
+            # semantic_gt = position.new_full((position_valid.size(0)), 0.0) # [P, ]
 
             if len(position_gt) > 0 and len(position_valid) > 0:
                 # compute chamfer distance # [N, P] shaped tensor
@@ -141,9 +144,16 @@ class GraphLoss(nn.Module):
                 # cost_class = -semantic_valid.permute(1, 0).contiguous()[:, pts_type_list] # [M, P]
                 # cost = self.cost_class * cost_class + self.cost_dist * cdist # [M, P]
                 nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
+                # assigned_gt_inds = position.new_full((cdist.size(0),), -1, dtype=torch.long) # [M, ]
+                # matched_pred_inds, matched_gt_inds = linear_sum_assignment(cdist.detach().cpu().numpy())
+                # matched_pred_inds = torch.from_numpy(matched_pred_inds).to(position.device)
+                # matched_gt_inds = torch.from_numpy(matched_gt_inds).to(position.device)
+                # assigned_gt_inds[matched_pred_inds] = matched_gt_inds # [M, ]
 
-                if len(nearest) > 1: # at least two vertices
+                if len(nearest) > 1: # at least two vertices matched_gt_inds
                     nearest_ins = [] # length (M)
+                    # nearest_ins = position.new_full((cdist.size(0),), -1, dtype=torch.long) # [M, ]
+                    # nearest_ins[matched_pred_inds] = torch.tensor(pts_ins_list)[matched_gt_inds] # [M, ]
                     for n, d in zip(nearest, nearest_dist):
                         nearest_ins.append(pts_ins_list[n] if d < self.cdist_threshold else -1)
                     for i in range(max(nearest_ins)+1): # for all instance IDs
@@ -204,7 +214,7 @@ class GraphLoss(nn.Module):
                     # ensure one-hot encoding
                     assert torch.min(semantic_gt_valid.sum(1)) == 1, f"minimum value of semantic gt sum expected 1, but got: {torch.min(semantic_gt_valid.sum(1))}"
                     assert torch.max(semantic_gt_valid.sum(1)) == 1, f"maximum value of semantic gt sum expected 1, but got: {torch.max(semantic_gt_valid.sum(1))}"
-                    # semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
+                    semantic_gt_valid = semantic_gt_valid.argmax(1) # [1, M]
 
                     semantic_loss = self.cls_loss(semantic_valid, semantic_gt_valid)
 

@@ -203,7 +203,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     if semantics is not None and semantics_gt is not None:
         # semantics: [b, 3, N] 0: divider, 1: ped-crossing, 2: boundary
         # semantics_gt: [b, 3, N]
-        semantic = semantics[0].detach().cpu().float().numpy() # [3, N]
+        semantic = semantics[0].exp().detach().cpu().float().numpy() # [3, N] if NLLLoss: .exp()
         semantic_gt = semantics_gt[0].detach().cpu().float().numpy().astype('uint8') # [3, N]
         
         semantic_onehot = semantic.argmax(0)[masks == 1] # [M]
@@ -233,7 +233,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
 def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is_master=False):
     # st
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).cuda()
 
     model.eval()
     counter = 0

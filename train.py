@@ -8,7 +8,7 @@ import argparse
 
 import torch
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 from loss import NLLLoss, SimpleLoss, DiscriminativeLoss, MSEWithReluLoss, CEWithSoftmaxLoss, FocalLoss, GraphLoss
 
 from data.dataset import semantic_dataset, vectormap_dataset
@@ -87,6 +87,7 @@ def train(args):
     
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers, args.distributed)
     model = get_model(args.model, data_conf, norm_layer_dict, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    logger.info(f'Model:\n{model}')
     model.to(device)
     
     model_without_ddp = model
@@ -106,8 +107,9 @@ def train(args):
         #     else:
         #         param.requires_grad = True
 
-    opt = torch.optim.Adam(model_without_ddp.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    sched = StepLR(opt, 10, 0.1)
+    opt = torch.optim.Adam(model_without_ddp.parameters(), lr=args.lr, weight_decay=args.weight_decay) #\
+        # if 'efficientnet' in args.backbone else torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    sched = StepLR(opt, 10, 0.1)# if 'efficientnet' in args.backbone else CosineAnnealingLR(opt, args.nepochs, eta_min=args.lr*1e-3)
     writer = SummaryWriter(logdir=args.logdir) if utils.is_main_process() else None
 
     loss_fn = SimpleLoss(args.pos_weight).cuda()
@@ -115,7 +117,7 @@ def train(args):
     direction_loss_fn = torch.nn.BCELoss(reduction='none')
     dt_loss_fn = MSEWithReluLoss().cuda()
     vt_loss_fn = CEWithSoftmaxLoss().cuda()
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).cuda()
 
     model.train()
     counter = 0
@@ -215,6 +217,7 @@ def train(args):
                     writer.add_scalar('train/cdist_loss', cdist_loss, counter)
                     for bi, mask in enumerate(masks):
                         writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
+                    writer.add_scalar('learning_rate', sched.get_last_lr(), counter)
             
             if args.vis_interval > 0:
                 if counter % args.vis_interval == 0 and utils.is_main_process():
@@ -257,6 +260,9 @@ def train(args):
 
 
 if __name__ == '__main__':
+    module_path = os.path.abspath(os.path.join('.'))
+    if module_path not in sys.path:
+        sys.path.append(module_path)
     parser = argparse.ArgumentParser(description='HDMapNet training.')
     # logging config
     parser.add_argument("--logdir", type=str, default='./runs/resolution_test')

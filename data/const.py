@@ -8,5 +8,6 @@ CLASS2LABEL = {
     'others': -1
 }
 NUM_CLASSES = 3
+MAP_CLASSES = ['divider', 'ped_crossing', 'contours']
 IMG_ORIGIN_H = 900
 IMG_ORIGIN_W = 1600

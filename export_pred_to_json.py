@@ -2,11 +2,13 @@ import argparse
 import mmcv
 import tqdm
 import torch
+from os import path as osp
 
 from data.dataset import semantic_dataset, vectormap_dataset
 from data.const import NUM_CLASSES
 from model import get_model
 from postprocess.vectorize import vectorize, vectorize_graph
+from evaluate_json import get_val_info
 
 
 def gen_dx_bx(xbound, ybound):
@@ -45,9 +47,9 @@ def export_to_json(model, val_loader, angle_class, args):
                 rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
                 submission['results'][rec['token']] = vectors
 
-    mmcv.dump(submission, args.output)
+    mmcv.dump(submission, args.result_path)
 
-def export_vectormapnet_to_json(model, val_loader, angle_class, args):
+def export_results_to_json(model, val_loader, angle_class, args):
     submission = {
         "meta": {
             "use_camera": True,
@@ -56,7 +58,7 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
             "use_external": False,
             "vector": True,
         },
-        "results": {}
+        "results": []
     }
 
     dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
@@ -70,14 +72,21 @@ def export_vectormapnet_to_json(model, val_loader, angle_class, args):
 
             for si in range(imgs.shape[0]):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], args.match_threshold)
+                result = {}
                 vectors = []
                 for coord, confidence, line_type in zip(coords, confidences, line_types):
                     vector = {'pts': coord * dx + bx, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
                     vectors.append(vector)
                 rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
-                submission['results'][rec['token']] = vectors
+                result['sample_token'] = rec['token']
+                result['vectors'] = vectors
+                # submission['results'][rec['token']] = vectors
+                submission['results'].append(result)
 
-    mmcv.dump(submission, args.output)
+    if args.result_path is None:
+        args.result_path = osp.join(osp.join(*osp.split(args.modelf)[:-1]), 'vector_submission.json')
+    mmcv.dump(submission, args.result_path)
+    print(f"Results file saved to {args.result_path}")
 
 
 def main(args):
@@ -110,7 +119,8 @@ def main(args):
     model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
-    export_vectormapnet_to_json(model, val_loader, args.angle_class, args)
+    export_results_to_json(model, val_loader, args.angle_class, args)
+    print(get_val_info(args))
 
 
 if __name__ == '__main__':
@@ -118,6 +128,7 @@ if __name__ == '__main__':
     # nuScenes config
     parser.add_argument('--dataroot', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
+    parser.add_argument('--eval_set', type=str, default='val', choices=['train', 'val', 'test', 'mini_train', 'mini_val'])
 
     # model config
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
@@ -138,6 +149,8 @@ if __name__ == '__main__':
     parser.add_argument("--zbound", nargs=3, type=float, default=[-10.0, 10.0, 20.0])
     parser.add_argument("--dbound", nargs=3, type=float, default=[4.0, 45.0, 1.0])
     parser.add_argument("--sample_dist", type=float, default=1.5)
+    parser.add_argument('--max_channel', type=int, default=3)
+    parser.add_argument('--CD_threshold', type=int, default=5)
 
     # embedding config
     parser.add_argument("--embedding_dim", type=int, default=16)
@@ -169,7 +182,7 @@ if __name__ == '__main__':
     parser.add_argument("--match_threshold", type=float, default=0.1)
 
     # output
-    parser.add_argument("--output", type=str, default='vectormapnet_vector_softmax.json')
+    parser.add_argument("--result_path", type=str, default=None)
 
     args = parser.parse_args()
     main(args)

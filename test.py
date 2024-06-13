@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
 from matplotlib.colors import to_rgb
 
-from data.dataset import HDMapNetDataset, VectorMapNetDataset
+from data.dataset import HDMapNetDataset, VectorMapDataset, vectormap_dataset
 from data.const import CAMS, NUM_CLASSES
 from model import get_model
 from postprocess.vectorize import vectorize_graph
@@ -22,6 +22,7 @@ from data.image import denormalize_img
 from export_pred_to_json import gen_dx_bx
 from data.utils import get_proj_mat, perspective
 from torchsummary import summary
+from mmcv.runner.fp16_utils import wrap_fp16_model
 
 def gen_dx_bx(xbound, ybound):
     dx = [row[2] for row in [xbound, ybound]] # [0.15, 0.15]
@@ -63,7 +64,7 @@ def test(dataset: HDMapNetDataset, model, args, data_conf):
                                                     post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
                                                     lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
         print("Running test...")
-        for idx in tqdm.tqdm(range(dataset.__len__())):
+        for idx in (range(dataset.__len__())):
             imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, \
             yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt = dataset.__getitem__(idx)
             rec = dataset.samples[idx]
@@ -85,120 +86,123 @@ def test(dataset: HDMapNetDataset, model, args, data_conf):
 
             torch.cuda.synchronize()
             start_time = time.perf_counter()
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
-                                                    post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
-                                                    lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+            with torch.no_grad():
+                model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
+                                                        post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
+                                                        lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
             
-            torch.cuda.synchronize()
-            mid_time = time.perf_counter()
-            coords, confidences, line_types = vectorize_graph(positions[0], matches[0], semantic[0], masks[0], data_conf['match_threshold'])
+                # torch.cuda.synchronize()
+                # mid_time = time.perf_counter()
+                # coords, confidences, line_types = vectorize_graph(positions[0], matches[0], semantic[0], masks[0], data_conf['match_threshold'])
             
             torch.cuda.synchronize()
             end_time = time.perf_counter()
 
-            model_time = mid_time - start_time
-            post_time = end_time - mid_time
+            # model_time = mid_time - start_time
+            # post_time = end_time - mid_time
             total_time = end_time - start_time
 
-            model_time_sum += model_time
-            post_time_sum += post_time
+            # model_time_sum += model_time
+            # post_time_sum += post_time
             total_time_sum += total_time
 
-            if args.vis:
-                impath = os.path.join(args.logdir, 'images')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.jpg')
-                # print('saving', imname)
+            # if args.vis:
+            #     impath = os.path.join(args.logdir, 'images')
+            #     if not os.path.exists(impath):
+            #         os.mkdir(impath)
+            #     imname = os.path.join(impath, f'{base_name}.jpg')
+            #     # print('saving', imname)
 
-                fig = plt.figure(figsize=(8, 3))
-                for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[0], intrins[0], rots[0], trans[0], CAMS)):
-                    img = np.array(denormalize_img(img)) # h, w, 3
-                    intrin = intrin_scale @ intrin
-                    P = get_proj_mat(intrin, rot, tran)
-                    ax = fig.add_subplot(2, 3, i+1)
-                    ax.get_xaxis().set_visible(False)
-                    ax.get_yaxis().set_visible(False)
-                    for coord, confidence, line_type in zip(coords, confidences, line_types):
-                        coord = coord * dx + bx # [-30, -15, 30, 15]
-                        pts, pts_num = coord, coord.shape[0]
-                        zeros = np.zeros((pts_num, 1))
-                        ones = np.ones((pts_num, 1))
-                        world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
-                        pix_coords = perspective(world_coords, P)
-                        x = np.array([pts[0] for pts in pix_coords], dtype='int')
-                        y = np.array([pts[1] for pts in pix_coords], dtype='int')
-                        for j in range(1, x.shape[0]):
-                            img = cv2.line(img, (x[j-1], y[j-1]), (x[j], y[j]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
-                    if i > 2:
-                        img = cv2.flip(img, 1)
-                    img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
-                    text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 3)
-                    text_w, text_h = text_size
-                    cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
-                    img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
-                    ax.imshow(img)
+            #     fig = plt.figure(figsize=(8, 3))
+            #     for i, (img, intrin, rot, tran, cam) in enumerate(zip(imgs[0], intrins[0], rots[0], trans[0], CAMS)):
+            #         img = np.array(denormalize_img(img)) # h, w, 3
+            #         intrin = intrin_scale @ intrin
+            #         P = get_proj_mat(intrin, rot, tran)
+            #         ax = fig.add_subplot(2, 3, i+1)
+            #         ax.get_xaxis().set_visible(False)
+            #         ax.get_yaxis().set_visible(False)
+            #         for coord, confidence, line_type in zip(coords, confidences, line_types):
+            #             coord = coord * dx + bx # [-30, -15, 30, 15]
+            #             pts, pts_num = coord, coord.shape[0]
+            #             zeros = np.zeros((pts_num, 1))
+            #             ones = np.ones((pts_num, 1))
+            #             world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
+            #             pix_coords = perspective(world_coords, P)
+            #             x = np.array([pts[0] for pts in pix_coords], dtype='int')
+            #             y = np.array([pts[1] for pts in pix_coords], dtype='int')
+            #             for j in range(1, x.shape[0]):
+            #                 img = cv2.line(img, (x[j-1], y[j-1]), (x[j], y[j]), color=tuple([255*c for c in to_rgb(colors_plt[line_type])]), thickness=2)
+            #         if i > 2:
+            #             img = cv2.flip(img, 1)
+            #         img = cv2.resize(img, (1600, 900), interpolation=cv2.INTER_CUBIC)
+            #         text_size, _ = cv2.getTextSize(cam, cv2.FONT_HERSHEY_SIMPLEX, 3, 3)
+            #         text_w, text_h = text_size
+            #         cv2.rectangle(img, (0, 0), (0+text_w, 0+text_h), color=(0, 0, 0), thickness=-1)
+            #         img = cv2.putText(img, cam, (0, 0 + text_h + 1 - 1), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3, cv2.LINE_AA)
+            #         ax.imshow(img)
                     
-                plt.subplots_adjust(wspace=0.0, hspace=0.0)
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                plt.close()
+            #     plt.subplots_adjust(wspace=0.0, hspace=0.0)
+            #     plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+            #     plt.close()
 
-                # Vector map
-                impath = os.path.join(args.logdir, 'vector_pred_final')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.png')
-                # print('saving', imname)
+            #     # Vector map
+            #     impath = os.path.join(args.logdir, 'vector_pred_final')
+            #     if not os.path.exists(impath):
+            #         os.mkdir(impath)
+            #     imname = os.path.join(impath, f'{base_name}.png')
+            #     # print('saving', imname)
 
-                fig = plt.figure(figsize=(4, 2))
-                plt.xlim(-30, 30)
-                plt.ylim(-15, 15)
-                plt.axis('off')
+            #     fig = plt.figure(figsize=(4, 2))
+            #     plt.xlim(-30, 30)
+            #     plt.ylim(-15, 15)
+            #     plt.axis('off')
 
-                for coord, confidence, line_type in zip(coords, confidences, line_types):
-                    coord = coord * dx + bx # [-30, -15, 30, 15]
-                    x = np.array([pt[0] for pt in coord])
-                    y = np.array([pt[1] for pt in coord])
-                    plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
-                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
-                    # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-                    # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
-                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                plt.close()
+            #     for coord, confidence, line_type in zip(coords, confidences, line_types):
+            #         coord = coord * dx + bx # [-30, -15, 30, 15]
+            #         x = np.array([pt[0] for pt in coord])
+            #         y = np.array([pt[1] for pt in coord])
+            #         plt.scatter(coord[:, 0], coord[:, 1], 1.5, c=colors_plt[line_type])
+            #         plt.plot(coord[:, 0], coord[:, 1], linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+            #         # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+            #         # plt.plot(x, y, '-', c=colors_plt[line_type], linewidth=2)
+            #     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+            #     plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+            #     plt.close()
 
-                # Instance map
-                impath = os.path.join(args.logdir, 'instance_pred')
-                if not os.path.exists(impath):
-                    os.mkdir(impath)
-                imname = os.path.join(impath, f'{base_name}.png')
-                # print('saving', imname)
+            #     # Instance map
+            #     impath = os.path.join(args.logdir, 'instance_pred')
+            #     if not os.path.exists(impath):
+            #         os.mkdir(impath)
+            #     imname = os.path.join(impath, f'{base_name}.png')
+            #     # print('saving', imname)
 
-                fig = plt.figure(figsize=(4, 2))
-                plt.xlim(-30, 30)
-                plt.ylim(-15, 15)
-                plt.axis('off')
+            #     fig = plt.figure(figsize=(4, 2))
+            #     plt.xlim(-30, 30)
+            #     plt.ylim(-15, 15)
+            #     plt.axis('off')
 
-                for coord in coords:
-                    coord = coord * dx + bx # [-30, -15, 30, 15]
-                    plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
-                plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
-                plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
-                plt.close()
+            #     for coord in coords:
+            #         coord = coord * dx + bx # [-30, -15, 30, 15]
+            #         plt.plot(coord[:, 0], coord[:, 1], linewidth=2)
+            #     plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+            #     plt.savefig(imname, bbox_inches='tight', pad_inches=0, dpi=400)
+            #     plt.close()
                 
             if (idx + 1) % args.log_interval == 0:
-                model_fps = (idx + 1) / model_time_sum
-                post_fps = (idx + 1) / post_time_sum
+                # model_fps = (idx + 1) / model_time_sum
+                # post_fps = (idx + 1) / post_time_sum
                 total_fps = (idx + 1) / total_time_sum
                 print(f'Done image [{idx + 1:<3}/ {args.samples}], ',
-                      f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}')
+                    #   f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}',
+                      f'fps: {total_fps:.1f} img / s')
                 
             if (idx + 1) == args.samples:
-                model_fps = (idx + 1) / model_time_sum
-                post_fps = (idx + 1) / post_time_sum
+                # model_fps = (idx + 1) / model_time_sum
+                # post_fps = (idx + 1) / post_time_sum
                 total_fps = (idx + 1) / total_time_sum
                 print('Overall: '
-                      f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}')
+                    #   f'Model FPS: {model_fps:>5.2f}    Post FPS: {post_fps:>5.2f}    Total FPS: {total_fps:>5.2f}',
+                      f'fps: {total_fps:.1f} img / s')
                 break
 
 def main(args):
@@ -224,7 +228,8 @@ def main(args):
         'match_threshold': args.match_threshold, # 0.1
     }
 
-    dataset = VectorMapNetDataset(version=args.version, dataroot=args.dataroot, data_conf=data_conf, is_train=False)
+    dataset = VectorMapDataset(version=args.version, dataroot=args.dataroot, data_conf=data_conf, is_train=False)
+    # _, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, 1, args.nworkers, False)
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
     norm_layer_dict = {'1d': torch.nn.BatchNorm1d, '2d': torch.nn.BatchNorm2d}
     model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
@@ -236,8 +241,11 @@ def main(args):
         print(f"{name} : {params}")
         total_params += params
     print(f"Total trainable params : {total_params}")
-    model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
+    # wrap_fp16_model(model)
+    if args.modelf is not None:
+        model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
     model.cuda()
+    # model = torch.nn.DataParallel(model, device_ids=[0])
 
     test(dataset, model, args, data_conf)
 
@@ -254,8 +262,9 @@ if __name__ == '__main__':
     parser.add_argument("--model", type=str, default='HDMapNet_cam')
     parser.add_argument("--backbone", type=str, default='efficientnet-b4',
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
+    parser.add_argument("--nworkers", type=int, default=4)
 
-    parser.add_argument('--modelf', type=str, default='./runs/offset_local_dt_nearest_effnet_b4/model_best.pt')
+    parser.add_argument('--modelf', type=str, default=None)
 
     # data config
     parser.add_argument("--thickness", type=int, default=5)

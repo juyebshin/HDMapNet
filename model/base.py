@@ -613,4 +613,4 @@ class InstaGraM(nn.Module):
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return graph_cls, distance, vertex, instance, direction, (matches), vertices, masks
+        return F.log_softmax(graph_cls, dim=1), distance, vertex, instance, direction, (matches), vertices, masks # if NLLLoss: F.log_softmax(graph_cls, dim=1)

@@ -139,7 +139,7 @@ def vectorize_graph(positions: torch.Tensor, match: torch.Tensor, segmentation: 
     t2mat = match.new_full(match[:-1, :-1].shape, 0, dtype=torch.bool)
     t2mat = t2mat.scatter_(1, t2indices, 1) # [M, M]
     adj_mat = adj_mat & t2mat # [M, M]
-    segmentation = torch.sigmoid(segmentation) # [3, N]
+    segmentation = segmentation.exp() # [3, N] # if NLLLoss: torch.sigmoid(segmentation)
     seg_onehot = onehot_encoding(segmentation).cpu()[:, mask == 1].numpy() # [3, M] 0, 1, 2
     segmentation = segmentation.cpu().numpy()[:, mask == 1] # [3, M]
     

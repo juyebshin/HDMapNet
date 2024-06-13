@@ -448,7 +448,9 @@ class VectorizedLocalMap(object):
     def sample_pts_from_line(self, line):
         if self.fixed_num < 0:
             if self.sample_dist > 0:
-                distances = np.arange(0, line.length, self.sample_dist)
+                # distances = np.arange(0, line.length, self.sample_dist)
+                distances = list(np.arange(self.sample_dist, line.length, self.sample_dist))
+                distances = [0,] + distances + [line.length,]
                 sampled_points = np.array([list(line.interpolate(distance).coords) for distance in distances]).reshape(-1, 2)
             else:
                 sampled_points = np.array(list(line.coords)).reshape(-1, 2)

@@ -9,6 +9,7 @@ from torch import nn
 
 from data.utils import gen_dx_bx
 from .base import CamEncode, BevEncode, InstaGraM
+from .pointpillar import PointPillarEncoder
 
 
 def cumsum_trick(x, geom_feats, ranks):
@@ -52,7 +53,7 @@ class QuickCumsum(torch.autograd.Function):
 
 
 class LiftSplat(nn.Module):
-    def __init__(self, data_conf, segmentation, instance_seg, embedded_dim, direction_pred, distance_reg, vertex_pred, norm_layer_dict, refine=False):
+    def __init__(self, data_conf, segmentation, instance_seg, embedded_dim, direction_pred, distance_reg, vertex_pred, norm_layer_dict, lidar=False, refine=False):
         super(LiftSplat, self).__init__()
         self.data_conf = data_conf
 
@@ -65,12 +66,17 @@ class LiftSplat(nn.Module):
         self.nx = nn.Parameter(nx, requires_grad=False)
 
         self.downsample = 16
-        self.camC = 64
+        self.camC = 64 if 'efficientnet' in data_conf['backbone'] else 256        
+        self.lidar = lidar
         self.frustum = self.create_frustum()
         # D x H/downsample x D/downsample x 3
         self.D, _, _, _ = self.frustum.shape
         self.camencode = CamEncode(self.camC, self.D, data_conf['backbone'], norm_layer_dict['2d']) # self.downsample, 
-        self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
+        if lidar:
+            self.pp = PointPillarEncoder(128, data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
+            self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
+        else:
+            self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
         self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
 
         # toggle using QuickCumsum vs. autograd
@@ -180,5 +186,8 @@ class LiftSplat(nn.Module):
     def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         # imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(), post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(), lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda()
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
+        if self.lidar:
+            lidar_feature = self.pp(lidar_data, lidar_mask)
+            x = torch.cat([x, lidar_feature], dim=1)
         x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(x)
         return self.head(x_seg, x_dt, x_vertex, x_embedded, x_direction)

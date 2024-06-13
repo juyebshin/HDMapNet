@@ -2,7 +2,7 @@ import torch
 import tqdm
 import csv
 
-from evaluation.dataset import HDMapNetEvalDataset
+from evaluation.dataset import HDMapNetEvalDataset, VectorMapEvalDataset
 from evaluation.chamfer_distance import semantic_mask_chamfer_dist_cum
 from evaluation.AP import instance_mask_AP
 from evaluation.iou import get_batch_iou
