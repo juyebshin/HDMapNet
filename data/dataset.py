@@ -230,18 +230,6 @@ class VectorMapDataset(HDMapNetDataset):
         self.pv_seg_classes = data_conf.get('pv_seg_classes', 1)
         self.feat_downsample = data_conf.get('feat_downsample', 1)
 
-    def get_ego_pose(self, rec):
-        sample_data_record = self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])
-        cs_record = self.nusc.get('calibrated_sensor', sample_data_record['calibrated_sensor_token'])
-        lidar2ego_trans = cs_record['translation']
-        lidar2ego_rotation = Quaternion(cs_record['rotation'])
-        lidar2ego_yaw_pitch_roll = lidar2ego_rotation.yaw_pitch_roll
-        ego_pose = self.nusc.get('ego_pose', sample_data_record['ego_pose_token'])
-        car_trans = ego_pose['translation'] # ego2global_translation
-        pos_rotation = Quaternion(ego_pose['rotation']) # ego2global_rotation
-        yaw_pitch_roll = pos_rotation.yaw_pitch_roll
-        return torch.tensor(car_trans), torch.tensor(yaw_pitch_roll), torch.tensor(lidar2ego_trans), torch.tensor(lidar2ego_yaw_pitch_roll)
-
     def get_vector_map(self, rec, img_shape=None, lidar2feat=None):
         vectors = self.get_vectors(rec)
         instance_masks, _, _, distance_masks, vertex_masks, pv_semantic_masks = preprocess_map(
@@ -258,7 +246,7 @@ class VectorMapDataset(HDMapNetDataset):
         rec = self.samples[idx]
         imgs, trans, rots, intrins, post_trans, post_rots = self.get_imgs(rec)
         lidar_data, lidar_mask = self.get_lidar(rec)
-        car_trans, yaw_pitch_roll, _, _ = self.get_ego_pose(rec)
+        car_trans, yaw_pitch_roll = self.get_ego_pose(rec)
         # cam projection matrix
         lidar2feat = []
         for i, cam in enumerate(CAMS):
