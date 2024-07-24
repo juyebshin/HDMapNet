@@ -57,13 +57,14 @@ class LiftSplat(nn.Module):
         super(LiftSplat, self).__init__()
         self.data_conf = data_conf
 
-        dx, bx, nx = gen_dx_bx(self.data_conf['xbound'],
-                                              self.data_conf['ybound'],
-                                              self.data_conf['zbound'],
+        dx, bx, nx = gen_dx_bx(data_conf['xbound'],
+                                data_conf['ybound'],
+                                data_conf['zbound'],
                                               )
         self.dx = nn.Parameter(dx, requires_grad=False)
         self.bx = nn.Parameter(bx, requires_grad=False)
         self.nx = nn.Parameter(nx, requires_grad=False)
+        self.pv_seg = data_conf['pv_seg']
 
         self.downsample = 16
         self.camC = 64 if 'efficientnet' in data_conf['backbone'] else 256        
@@ -71,13 +72,21 @@ class LiftSplat(nn.Module):
         self.frustum = self.create_frustum()
         # D x H/downsample x D/downsample x 3
         self.D, _, _, _ = self.frustum.shape
-        self.camencode = CamEncode(self.camC, self.D, data_conf['backbone'], norm_layer_dict['2d']) # self.downsample, 
+        self.camencode = CamEncode(self.camC, self.D, data_conf['backbone'], norm_layer_dict['2d'], data_conf['pv_seg'], data_conf['pv_seg_classes']) # self.downsample, 
         if lidar:
             self.pp = PointPillarEncoder(128, data_conf['xbound'], data_conf['ybound'], data_conf['zbound'])
             self.bevencode = BevEncode(inC=self.camC+128, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
         else:
             self.bevencode = BevEncode(inC=self.camC, outC=data_conf['num_channels'], norm_layer=norm_layer_dict['2d'], segmentation=segmentation, instance_seg=instance_seg, embedded_dim=embedded_dim, direction_pred=direction_pred, distance_reg=distance_reg, vertex_pred=vertex_pred, cell_size=self.data_conf['cell_size'])
         self.head = InstaGraM(data_conf, norm_layer_dict['1d'], distance_reg, refine)
+        
+        if data_conf['pv_seg']:
+            self.pv_seg_head = nn.Sequential(
+                    nn.Conv2d(self.camC, self.camC, kernel_size=3, padding=1, bias=False),
+                    # nn.BatchNorm2d(128),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(self.camC, data_conf['pv_seg_classes'], kernel_size=1, padding=0)
+                )
 
         # toggle using QuickCumsum vs. autograd
         self.use_quickcumsum = True
@@ -123,11 +132,11 @@ class LiftSplat(nn.Module):
         B, N, C, imH, imW = x.shape
 
         x = x.view(B*N, C, imH, imW)
-        x = self.camencode(x) # B*N, C*D, h, w
-        x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample) # B, N, C, D, h, w
-        x = x.permute(0, 1, 3, 4, 5, 2).contiguous()
+        x, depth_x = self.camencode(x) # B*N, C*D, h, w
+        depth_x = depth_x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample) # B, N, C, D, h, w
+        depth_x = depth_x.permute(0, 1, 3, 4, 5, 2).contiguous()
 
-        return x # B, N, D(=41), h, w, C(=64)
+        return x, depth_x # B, N, D(=41), h, w, C(=64)
 
     def voxel_pooling(self, geom_feats, x):
         B, N, D, H, W, C = x.shape # B, N(=6), D(=41), h, w, C(=64)
@@ -177,17 +186,21 @@ class LiftSplat(nn.Module):
         # B x N x D x H/downsample x W/downsample x 3: (x,y,z) locations (in the ego frame)
         geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans)
         # B x N x D x H/downsample x W/downsample x C: cam feats
-        x = self.get_cam_feats(x)
+        x, depth_x = self.get_cam_feats(x)
 
-        x = self.voxel_pooling(geom, x)
+        depth_x = self.voxel_pooling(geom, depth_x)
 
-        return x
+        return x, depth_x
 
     def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
         # imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(), post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(), lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda()
-        x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
+        x, depth_x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
         if self.lidar:
             lidar_feature = self.pp(lidar_data, lidar_mask)
-            x = torch.cat([x, lidar_feature], dim=1)
-        x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(x)
-        return self.head(x_seg, x_dt, x_vertex, x_embedded, x_direction)
+            depth_x = torch.cat([depth_x, lidar_feature], dim=1)
+        x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(depth_x)
+        semantic, distance, vertex, matches, positions, masks = self.head(x_dt, x_vertex)
+        if self.pv_seg:
+            pv_seg = self.pv_seg_head(x)
+            return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction, pv_seg
+        return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction

@@ -5,6 +5,7 @@ import torch
 
 from shapely import affinity
 from shapely.geometry import LineString, box
+from .utils import perspective
 
 
 def get_patch_coord(patch_box, patch_angle=0.0):
@@ -47,6 +48,22 @@ def mask_for_lines(lines, mask, thickness, idx, type='index', angle_class=36):
             cv2.polylines(mask, [coords[i:]], False, color=get_discrete_degree(coords[i + 1] - coords[i], angle_class=angle_class), thickness=thickness)
     return mask, idx
 
+    
+def line_ego_to_pvmask(line_ego, 
+                        mask, 
+                        lidar2feat,
+                        color=1, 
+                        thickness=1,
+                        z=0.0): # lidar: -1.6, ego: 0.0
+    distances = np.linspace(0, line_ego.length, 200)
+    coords = np.array([list(line_ego.interpolate(distance).coords) for distance in distances]).reshape(-1, 2)
+    pts_num = coords.shape[0]
+    zeros = np.zeros((pts_num,1))
+    zeros[:] = z
+    ones = np.ones((pts_num,1))
+    lidar_coords = np.concatenate([coords,zeros,ones], axis=1).transpose(1,0)
+    pix_coords = perspective(lidar_coords, lidar2feat)
+    cv2.polylines(mask, np.int32([pix_coords]), False, color=color, thickness=thickness)
 
 def line_geom_to_mask(layer_geom, confidence_levels, local_box, canvas_size, thickness, idx, type='index', angle_class=36):
     patch_x, patch_y, patch_h, patch_w = local_box
@@ -91,7 +108,8 @@ def overlap_filter(mask, filter_mask):
     return mask
 
 
-def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, angle_class, cell_size=8):
+def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, angle_class, cell_size=8,
+                   pv_seg_classes=1, img_shape=None, lidar2feat=None):
     confidence_levels = [-1]
     vector_num_list = {}
     for i in range(num_classes):
@@ -123,6 +141,19 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
         distance_masks.append(distance_mask)
         vertex_mask, _ = line_geom_to_mask(vector_num_list[i], confidence_levels, local_box, canvas_size, 1, 1, type='vertex')
         vertex_masks.append(vertex_mask)
+        num_cam = len(lidar2feat)
+    if pv_seg_classes == 1:
+        pv_semantic_masks = np.zeros((num_cam, 1, img_shape[0], img_shape[1]), dtype=np.uint8)
+        for type, vectors in vector_num_list.items():
+            for vector in vectors:
+                for cam_index in range(num_cam):
+                    line_ego_to_pvmask(vector, pv_semantic_masks[cam_index][0], lidar2feat[cam_index])
+    else:
+        pv_semantic_masks = np.zeros((num_cam, num_classes, img_shape[0], img_shape[1]), dtype=np.uint8)
+        for type, vectors in vector_num_list.items():
+            for vector in vectors:
+                for cam_index in range(num_cam):
+                    line_ego_to_pvmask(vector, pv_semantic_masks[cam_index][type], lidar2feat[cam_index])
 
     # canvas_size: tuple (int, int)
     # vertex_masks: 3, 200, 400
@@ -170,7 +201,7 @@ def preprocess_map(vectors, patch_size, canvas_size, num_classes, thickness, ang
 
     distance_masks = distance_masks != 0
 
-    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks), distance_masks, torch.tensor(vertex_masks)
+    return torch.tensor(instance_masks), torch.tensor(forward_masks), torch.tensor(backward_masks), distance_masks, torch.tensor(vertex_masks), torch.tensor(pv_semantic_masks)
 
 
 def rasterize_map(vectors, patch_size, canvas_size, num_classes, thickness):

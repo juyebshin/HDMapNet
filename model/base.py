@@ -157,11 +157,12 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C, D=None, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d):
+    def __init__(self, C, D=None, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d, pv_seg=False, pv_seg_classes=1):
         super(CamEncode, self).__init__()
         self.C = C
         self.D = D
         self.backbone = backbone
+        self.pv_seg = pv_seg
 
         if 'efficientnet' in backbone:
             self.trunk = EfficientNet.from_pretrained(backbone)
@@ -280,12 +281,12 @@ class CamEncode(nn.Module):
             raise NotImplementedError
 
         if self.D is not None:
-            x = self.depthnet(x) # B*N, 41+64, 8, 22
+            depth_x = self.depthnet(x) # B*N, 41+64, 8, 22
 
-            depth = self.get_depth_dist(x[:, :self.D]) # B*N, 41, 8, 22
-            new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
+            depth = self.get_depth_dist(depth_x[:, :self.D]) # B*N, 41, 8, 22
+            new_x = depth.unsqueeze(1) * depth_x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
 
-            return new_x # [B*N, 64, 41, 8, 22]
+            return x, new_x # [B*N, 64, 41, 8, 22]
         else:
             return x
 
@@ -311,14 +312,15 @@ class BevEncode(nn.Module):
         self.up1 = Up(64 + 256, 256, scale_factor=4, norm_layer=norm_layer)
 
         self.segmentation = segmentation
-        self.up2 = nn.Sequential( # final semantic segmentation prediction
-            nn.Upsample(scale_factor=2, mode='bilinear',
-                        align_corners=True),
-            nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-            norm_layer(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4 (num_classes)
-        )
+        if segmentation:
+            self.up2 = nn.Sequential( # final semantic segmentation prediction
+                nn.Upsample(scale_factor=2, mode='bilinear',
+                            align_corners=True),
+                nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
+                norm_layer(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, outC, kernel_size=1, padding=0), # outC = 4 (num_classes)
+            )
 
         self.distance_reg = distance_reg
         if distance_reg:
@@ -491,7 +493,7 @@ class InstaGraM(nn.Module):
         if self.refine:
             self.offset_head = nn.Conv1d(self.feature_dim, 2, kernel_size=1, bias=True)
 
-    def forward(self, semantic, distance, vertex, instance, direction):
+    def forward(self, distance, vertex):
         """ semantic, instance, direction are not used
         @ vertex: (b, 65, 25, 50); (..., 50, 50)
         @ distance: (b, 3, 200, 400); (..., 400, 400)
@@ -613,4 +615,4 @@ class InstaGraM(nn.Module):
 
         # return matches [b, N, N], vertices (pix coord) [b, N, 3], masks [b, N, 1]
 
-        return F.log_softmax(graph_cls, dim=1), distance, vertex, instance, direction, (matches), vertices, masks # if NLLLoss: F.log_softmax(graph_cls, dim=1)
+        return F.log_softmax(graph_cls, dim=1), distance, vertex, (matches), vertices, masks # if NLLLoss: F.log_softmax(graph_cls, dim=1)

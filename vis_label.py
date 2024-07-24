@@ -6,34 +6,55 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import csv
 
-from data.dataset import HDMapNetDataset, CAMS
+from data.dataset import VectorMapDataset, CAMS
 from data.utils import get_proj_mat, perspective
 from data.image import denormalize_img
 
 
 def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
     data_conf = {
-        'image_size': (900, 1600),
+        'image_size': (256, 704),
         'xbound': xbound,
         'ybound': ybound,
         'sample_dist': sample_dist, # 1.5
+        'thickness': 5,
+        'angle_class': 36,
+        'dist_threshold': 10, # 10.0
+        'cell_size': 8, # 8
+        'pv_seg': True,
+        'pv_seg_classes': 1,
+        'feat_downsample': 16,
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
     color_map[0] = np.array([0, 0, 0])
-    colors_plt = ['tab:red', 'tab:blue', 'tab:green']
+    colors_plt = ['tab:red', 'tab:blue', 'tab:green', 'k']
 
-    dataset = HDMapNetDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=is_train)
+    semantic_color = np.array([
+        [255, 0, 0], # line
+        [0, 0, 255], # ped_crossing
+        [0, 255, 0], # contour
+        [0, 0, 0], # background
+        ])
+
+    dataset = VectorMapDataset(version=version, dataroot=dataroot, data_conf=data_conf, is_train=is_train)
     gt_path = os.path.join(dataroot, 'GT')
     if not os.path.exists(gt_path):
         os.mkdir(gt_path)
+        
+    intrin_scale = np.eye(3)
+    intrin_scale[0, 0] *= data_conf['image_size'][1] / 1600.
+    intrin_scale[1, 1] *= data_conf['image_size'][0] / 900.
 
     car_img = Image.open('icon/car.png')
     num_vectors_list = []
     for idx in tqdm.tqdm(range(dataset.__len__())):
         rec = dataset.nusc.sample[idx]
-        imgs, trans, rots, intrins, post_trans, post_rots = dataset.get_imgs(rec)
-        vectors = dataset.get_vectors(rec)
+        # imgs, trans, rots, intrins, post_trans, post_rots = dataset.get_imgs(rec)
+        # vectors = dataset.get_vectors(rec)
+        imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, \
+        car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, \
+        vertex_masks, pv_semantic_masks, vectors = dataset[idx]
 
         lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
 
@@ -42,27 +63,27 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
 
         if not os.path.exists(base_path):
             os.mkdir(base_path)
-        # plt.figure()
-        # plt.xlim(xbound[0], xbound[1])
-        # plt.ylim(ybound[0], ybound[1])
-        # plt.axis('off')
+        plt.figure()
+        plt.xlim(xbound[0], xbound[1])
+        plt.ylim(ybound[0], ybound[1])
+        plt.axis('off')
         num_vectors = 0
         for vector in vectors:
             pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
             pts = pts[:pts_num]
             x = np.array([pt[0] for pt in pts])
             y = np.array([pt[1] for pt in pts])
-            # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-            # plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
-            # plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
+            plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+            plt.scatter(x, y, s=1.5, c=colors_plt[line_type])
+            plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
             num_vectors += pts_num
         num_vectors_list.append([base_path, num_vectors])
 
-        # plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
+        plt.imshow(car_img, extent=[-1.5, 1.5, -1.2, 1.2])
 
-        # map_path = os.path.join(base_path, 'MAP.png')
-        # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
-        # plt.close()
+        map_path = os.path.join(base_path, 'MAP.png')
+        plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
+        plt.close()
 
         # major_xticks = np.linspace(int(xbound[0]), int(xbound[1]), int((xbound[1]-xbound[0])/(8*xbound[2])+1))
         # major_yticks = np.linspace(int(ybound[0]), int(ybound[1]), int((ybound[1]-ybound[0])/(8*ybound[2])+1))
@@ -87,31 +108,48 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
         # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
         # plt.close()
 
-        # for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
-        #     img = denormalize_img(img)
-        #     P = get_proj_mat(intrin, rot, tran)
-        #     plt.figure(figsize=(9, 16))
-        #     fig = plt.imshow(img)
-        #     fig.axes.get_xaxis().set_visible(False)
-        #     fig.axes.get_yaxis().set_visible(False)
-        #     plt.xlim(1600, 0)
-        #     plt.ylim(900, 0)
-        #     plt.axis('off')
-        #     for vector in vectors:
-        #         pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-        #         pts = pts[:pts_num]
-        #         zeros = np.zeros((pts_num, 1))
-        #         ones = np.ones((pts_num, 1))
-        #         world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
-        #         pix_coords = perspective(world_coords, P)
-        #         x = np.array([pts[0] for pts in pix_coords])
-        #         y = np.array([pts[1] for pts in pix_coords])
-        #         plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy',
-        #                 angles='xy', scale=1, color=colors_plt[line_type])
+        for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
+            img = denormalize_img(img)
+            intrin = intrin_scale @ intrin.numpy()
+            P = get_proj_mat(intrin, rot, tran)
+            plt.figure()
+            fig = plt.imshow(img)
+            fig.axes.get_xaxis().set_visible(False)
+            fig.axes.get_yaxis().set_visible(False)
+            plt.xlim(0, data_conf['image_size'][1])
+            plt.ylim(data_conf['image_size'][0], 0)
+            plt.axis('off')
+            for vector in vectors:
+                pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+                pts = pts[:pts_num]
+                zeros = np.zeros((pts_num, 1))
+                ones = np.ones((pts_num, 1))
+                world_coords = np.concatenate([pts, zeros, ones], axis=1).transpose(1, 0)
+                pix_coords = perspective(world_coords, P)
+                x = np.array([pts[0] for pts in pix_coords])
+                y = np.array([pts[1] for pts in pix_coords])
+                # plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy',
+                #         angles='xy', scale=1, color=colors_plt[line_type])
+                plt.plot(x, y, linewidth=2.0, color=colors_plt[line_type], alpha=0.7)
 
-        #     cam_path = os.path.join(base_path, f'{cam}.png')
-        #     plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
-        #     plt.close()
+            cam_path = os.path.join(base_path, f'{cam}.png')
+            plt.savefig(cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
+            plt.close()
+            
+            pv_semantic_mask = pv_semantic_masks[CAMS.index(cam)] # (num_classes, h, w)
+            pv_semantic_mask = pv_semantic_mask.numpy().astype('uint8') * 255
+            pv_bg_mask = np.zeros((1, *pv_semantic_mask.shape[1:]), np.uint8) # (1, h, w)
+            pv_bg_mask[:, pv_semantic_mask.max(0) == 0] = 255
+            pv_semantic_mask = np.concatenate([pv_semantic_mask, pv_bg_mask], axis=0) # (num_classes+1, h, w)
+            pv_semantic_mask = np.argmax(pv_semantic_mask, axis=0) # (h, w)
+            pv_semantic_color_mask = semantic_color[pv_semantic_mask].astype('uint8')
+            plt.figure()
+            plt.imshow(pv_semantic_color_mask)
+            plt.axis('off')
+
+            pv_cam_path = os.path.join(base_path, f'pv_mask_{cam}.png')
+            plt.savefig(pv_cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
+            plt.close()
     
     prefix = 'train' if is_train else 'val'
     if xbound[1] > 30:

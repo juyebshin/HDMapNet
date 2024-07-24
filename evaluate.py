@@ -233,7 +233,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
 def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is_master=False):
     # st
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).cuda()
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).to(args.device)
 
     model.eval()
     counter = 0
@@ -242,15 +242,20 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
     total_cdist_p = 0.0
     total_cdist_l = 0.0
     with torch.no_grad():
-        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt in tqdm.tqdm(val_loader):
+        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt in tqdm.tqdm(val_loader):
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
-                                                post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
-                                                lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+            outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
+                                                post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
+                                                lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
+            
+            if args.pv_seg:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+            else:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
 
             heatmap = vertex.softmax(1) # b, 65, 25, 50
             matches = matches.exp() # b, N+1, N+1
-            vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
+            vertex_gt = vertex_gt.to(args.device).float() # b, 65, 25, 50
             intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
             total_intersects += intersects
             total_union += union
@@ -264,10 +269,10 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0 and is_master:                
                         if args.distance_reg:
-                            distance = distance.relu().clamp(max=args.dist_threshold).cuda() # b, 3, 200, 400
-                        # distance_gt = distance_gt.cuda() # b, 3, 200, 400
+                            distance = distance.relu().clamp(max=args.dist_threshold).to(args.device) # b, 3, 200, 400
+                        # distance_gt = distance_gt.to(args.device) # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
-                        # vertex_gt = vertex_gt.cuda().float() # b, 65, 25, 50
+                        # vertex_gt = vertex_gt.to(args.device).float() # b, 65, 25, 50
                         visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, step, args)
             
             counter += 1
@@ -304,7 +309,7 @@ def main(args):
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf), strict=False)
-    model.cuda()
+    model.to(args.device)
     print(eval_iou(model, val_loader))
 
 
@@ -323,6 +328,8 @@ if __name__ == '__main__':
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
     parser.add_argument("--nepochs", type=int, default=30)
     parser.add_argument("--max_grad_norm", type=float, default=5.0)
     parser.add_argument("--pos_weight", type=float, default=2.13)

@@ -34,9 +34,9 @@ def export_to_json(model, val_loader, angle_class, args):
     model.eval()
     with torch.no_grad():
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, segmentation_gt, instance_gt, direction_gt) in enumerate(tqdm.tqdm(val_loader)):
-            segmentation, embedding, direction = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
-                                                       post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
-                                                       lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+            segmentation, embedding, direction = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
+                                                       post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
+                                                       lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
 
             for si in range(segmentation.shape[0]):
                 coords, confidences, line_types = vectorize(segmentation[si], embedding[si], direction[si], angle_class)
@@ -65,10 +65,15 @@ def export_results_to_json(model, val_loader, angle_class, args):
 
     model.eval()
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
-                                                       post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
-                                                       lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
+            outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
+                                                       post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
+                                                       lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
+            
+            if args.pv_seg:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+            else:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
 
             for si in range(imgs.shape[0]):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], args.match_threshold)
@@ -110,15 +115,20 @@ def main(args):
         'sinkhorn_iterations': args.sinkhorn_iterations, # 100
         'vertex_threshold': args.vertex_threshold, # 0.015
         'match_threshold': args.match_threshold, # 0.1
+        'pv_seg': args.pv_seg,
+        'pv_seg_classes': args.pv_seg_classes, # 1
+        'feat_downsample': args.feat_downsample, # 16
     }
+    device = torch.device(args.device)
+    args.device = device
 
     # train_loader, val_loader = semantic_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
     # model = get_model(args.model, data_conf, True, args.embedding_dim, True, args.angle_class)
     norm_layer_dict = {'1d': torch.nn.BatchNorm1d, '2d': torch.nn.BatchNorm2d}
-    model = get_model(args.model, data_conf, norm_layer_dict, False, False, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model = get_model(args.model, data_conf, norm_layer_dict, False, args.instance_seg, args.embedding_dim, False, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf, map_location='cuda:0'), strict=False)
-    model.cuda()
+    model.to(device)
     export_results_to_json(model, val_loader, args.angle_class, args)
     print(get_val_info(args))
 
@@ -136,6 +146,8 @@ if __name__ == '__main__':
                         choices=['efficientnet-b0', 'efficientnet-b4', 'efficientnet-b7', 'resnet-18', 'resnet-50'])
 
     # training config
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
     parser.add_argument("--bsz", type=int, default=4)
     parser.add_argument("--nworkers", type=int, default=10)
 
@@ -153,7 +165,10 @@ if __name__ == '__main__':
     parser.add_argument('--CD_threshold', type=int, default=5)
 
     # embedding config
+    parser.add_argument('--instance_seg', action='store_true')
     parser.add_argument("--embedding_dim", type=int, default=16)
+    parser.add_argument("--delta_v", type=float, default=0.5)
+    parser.add_argument("--delta_d", type=float, default=3.0)
 
     # direction config
     parser.add_argument('--angle_class', type=int, default=36)
@@ -165,6 +180,11 @@ if __name__ == '__main__':
     # vertex location classification config
     parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+    
+    # pv segmentation config
+    parser.add_argument("--pv_seg", action='store_true')
+    parser.add_argument("--pv_seg_classes", type=int, default=1)
+    parser.add_argument("--feat_downsample", type=int, default=16)
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,

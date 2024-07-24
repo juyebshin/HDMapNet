@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data._utils.collate import default_collate
 from data.rasterize import preprocess_map
+from data.utils import get_proj_mat
 from .const import CAMS, NUM_CLASSES, IMG_ORIGIN_H, IMG_ORIGIN_W, MAP_CLASSES
 from .vector_map import VectorizedLocalMap
 from .lidar import get_lidar_data
@@ -218,235 +219,58 @@ def semantic_dataset(version, dataroot, data_conf, bsz, nworkers):
     return train_loader, val_loader
 
 class VectorMapDataset(HDMapNetDataset):
-    def __init__(self, version, dataroot, data_conf, is_train, map_ann_file=None):
+    def __init__(self, version, dataroot, data_conf, is_train):
         super(VectorMapDataset, self).__init__(version, dataroot, data_conf, is_train)
         self.thickness = data_conf['thickness']
         self.angle_class = data_conf['angle_class']
         self.dist_threshold = data_conf['dist_threshold']
         self.cell_size = data_conf['cell_size']
+        
+        self.pv_seg = data_conf.get('pv_seg', False)
+        self.pv_seg_classes = data_conf.get('pv_seg_classes', 1)
+        self.feat_downsample = data_conf.get('feat_downsample', 1)
 
-    def get_vector_map(self, rec):
+    def get_ego_pose(self, rec):
+        sample_data_record = self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])
+        cs_record = self.nusc.get('calibrated_sensor', sample_data_record['calibrated_sensor_token'])
+        lidar2ego_trans = cs_record['translation']
+        lidar2ego_rotation = Quaternion(cs_record['rotation'])
+        lidar2ego_yaw_pitch_roll = lidar2ego_rotation.yaw_pitch_roll
+        ego_pose = self.nusc.get('ego_pose', sample_data_record['ego_pose_token'])
+        car_trans = ego_pose['translation'] # ego2global_translation
+        pos_rotation = Quaternion(ego_pose['rotation']) # ego2global_rotation
+        yaw_pitch_roll = pos_rotation.yaw_pitch_roll
+        return torch.tensor(car_trans), torch.tensor(yaw_pitch_roll), torch.tensor(lidar2ego_trans), torch.tensor(lidar2ego_yaw_pitch_roll)
+
+    def get_vector_map(self, rec, img_shape=None, lidar2feat=None):
         vectors = self.get_vectors(rec)
-        instance_masks, _, _, distance_masks, vertex_masks = preprocess_map(vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class, self.cell_size)
+        instance_masks, _, _, distance_masks, vertex_masks, pv_semantic_masks = preprocess_map(
+            vectors, self.patch_size, self.canvas_size, NUM_CLASSES, self.thickness, self.angle_class, self.cell_size,
+            self.pv_seg_classes, img_shape, lidar2feat)
         semantic_masks = instance_masks != 0
         semantic_masks = torch.cat([(~torch.any(semantic_masks, axis=0)).unsqueeze(0), semantic_masks])
         instance_masks = instance_masks.sum(0)
         # obtain normalized DT [0.0, 1.0], truncated by 10
         distance_masks = get_distance_transform(distance_masks, self.dist_threshold)
-        return semantic_masks, instance_masks, torch.tensor(distance_masks, dtype=torch.float32), vertex_masks.type(torch.bool), vectors
+        return semantic_masks, instance_masks, torch.tensor(distance_masks, dtype=torch.float32), vertex_masks.type(torch.bool), vectors, pv_semantic_masks
         
     def __getitem__(self, idx):
         rec = self.samples[idx]
         imgs, trans, rots, intrins, post_trans, post_rots = self.get_imgs(rec)
         lidar_data, lidar_mask = self.get_lidar(rec)
-        car_trans, yaw_pitch_roll = self.get_ego_pose(rec)
-        semantic_masks, instance_masks, distance_masks, vertex_masks, vectors = self.get_vector_map(rec)
-        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, vectors
-
-    def format_results(self, results, jsonfile_prefix=None):
-        """Format the results to json (standard format for COCO evaluation).
-
-        Args:
-            results (list[dict]): Testing results of the dataset.
-            jsonfile_prefix (str | None): The prefix of json files. It includes
-                the file path and the prefix of filename, e.g., "a/b/prefix".
-                If not specified, a temp file will be created. Default: None.
-
-        Returns:
-            tuple: Returns (result_files, tmp_dir), where `result_files` is a \
-                dict containing the json filepaths, `tmp_dir` is the temporal \
-                directory created for saving json files when \
-                `jsonfile_prefix` is not specified.
-        """
-        assert isinstance(results, list), 'results must be a list'
-        assert len(results) == len(self), (
-            'The length of results is not equal to the dataset len: {} != {}'.
-            format(len(results), len(self)))
-
-        if jsonfile_prefix is None:
-            tmp_dir = tempfile.TemporaryDirectory()
-            jsonfile_prefix = osp.join(tmp_dir.name, 'results')
-        else:
-            tmp_dir = None
-
-        # currently the output prediction results could be in two formats
-        # 1. list of dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...)
-        # 2. list of dict('pts_bbox' or 'img_bbox':
-        #     dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...))
-        # this is a workaround to enable evaluation of both formats on nuScenes
-        # refer to https://github.com/open-mmlab/mmdetection3d/issues/449
-        if not ('pts_bbox' in results[0] or 'img_bbox' in results[0]):
-            result_files = self._format_bbox(results, jsonfile_prefix)
-        else:
-            # should take the inner dict out of 'pts_bbox' or 'img_bbox' dict
-            result_files = dict()
-            for name in results[0]:
-                print(f'\nFormating bboxes of {name}')
-                results_ = [out[name] for out in results]
-                tmp_file_ = osp.join(jsonfile_prefix, name)
-                result_files.update(
-                    {name: self._format_bbox(results_, tmp_file_)})
-        return result_files, tmp_dir
-
-    def _format_bbox(self, results, jsonfile_prefix=None):
-        """Convert the results to the standard format.
-
-        Args:
-            results (list[dict]): Testing results of the dataset.
-            jsonfile_prefix (str): The prefix of the output jsonfile.
-                You can specify the output directory/filename by
-                modifying the jsonfile_prefix. Default: None.
-
-        Returns:
-            str: Path of the output json file.
-        """
-        assert self.map_ann_file is not None
-        pred_annos = []
-        mapped_class_names = self.MAPCLASSES
-        # import pdb;pdb.set_trace()
-        print('Start to convert map detection format...')
-        for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
-            pred_anno = {}
-            vecs = output_to_vecs(det)
-            sample_token = self.data_infos[sample_id]['token']
-            pred_anno['sample_token'] = sample_token
-            pred_vec_list=[]
-            for i, vec in enumerate(vecs): # for num_vec
-                name = mapped_class_names[vec['label']]
-                anno = dict(
-                    pts=vec['pts'],
-                    pts_num=len(vec['pts']),
-                    cls_name=name,
-                    type=vec['label'],
-                    confidence_level=vec['score'])
-                pred_vec_list.append(anno)
-
-            pred_anno['vectors'] = pred_vec_list
-            pred_annos.append(pred_anno)
-
-
-        if not os.path.exists(self.map_ann_file):
-            self._format_gt()
-        else:
-            print(f'{self.map_ann_file} exist, not update')
-
-        nusc_submissions = {
-            'meta': self.modality,
-            'results': pred_annos,
-
-        }
-
-        mmcv.mkdir_or_exist(jsonfile_prefix)
-        res_path = osp.join(jsonfile_prefix, 'nuscmap_results.json')
-        print('Results writes to', res_path)
-        mmcv.dump(nusc_submissions, res_path)
-        return res_path
-    
-    def _evaluate_single(self,
-                         result_path,
-                         logger=None,
-                         metric='chamfer'):
-        """Evaluation for a single model in nuScenes protocol.
-
-        Args:
-            result_path (str): Path of the result file.
-            logger (logging.Logger | str | None): Logger used for printing
-                related information during evaluation. Default: None.
-            metric (str): Metric name used for evaluation. Default: 'bbox'.
-
-        Returns:
-            dict: Dictionary of evaluation details.
-        """
-        # import eval_map
-        # import format_res_gt_by_classes
-        from .mean_ap import eval_map
-        from .mean_ap import format_res_gt_by_classes
-        result_path = os.path.abspath(result_path)
-        detail = dict()
-
-        print('Formating results & gts by classes')
-        with open(result_path, 'r') as f:
-            pred_results = json.load(f)
-        gen_results = pred_results['results']
-        with open(self.map_ann_file, 'r') as ann_f:
-            gt_anns = json.load(ann_f)
-        annotations = gt_anns['GTs']
-        cls_gens, cls_gts = format_res_gt_by_classes(result_path,
-                                                     gen_results,
-                                                     annotations,
-                                                     cls_names=MAP_CLASSES,
-                                                     eval_use_same_gt_sample_num_flag=True,
-                                                     pc_range=self.pc_range)
-
-        metrics = metric if isinstance(metric, list) else [metric]
-        allowed_metrics = ['chamfer', 'iou']
-        for metric in metrics:
-            if metric not in allowed_metrics:
-                raise KeyError(f'metric {metric} is not supported')
-
-        for metric in metrics:
-            print('-*'*10+f'use metric:{metric}'+'-*'*10)
-
-            if metric == 'chamfer':
-                thresholds = [0.5,1.0,1.5]
-            elif metric == 'iou':
-                thresholds= np.linspace(.5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
-            cls_aps = np.zeros((len(thresholds),self.NUM_MAPCLASSES))
-
-            for i, thr in enumerate(thresholds):
-                print('-*'*10+f'threshhold:{thr}'+'-*'*10)
-                mAP, cls_ap = eval_map(
-                                gen_results,
-                                annotations,
-                                cls_gens,
-                                cls_gts,
-                                threshold=thr,
-                                cls_names=self.MAPCLASSES,
-                                logger=logger,
-                                num_pred_pts_per_instance=self.fixed_num,
-                                pc_range=self.pc_range,
-                                metric=metric)
-                for j in range(self.NUM_MAPCLASSES):
-                    cls_aps[i, j] = cls_ap[j]['ap']
-
-            for i, name in enumerate(self.MAPCLASSES):
-                print('{}: {}'.format(name, cls_aps.mean(0)[i]))
-                detail['NuscMap_{}/{}_AP'.format(metric,name)] =  cls_aps.mean(0)[i]
-            print('map: {}'.format(cls_aps.mean(0).mean()))
-            detail['NuscMap_{}/mAP'.format(metric)] = cls_aps.mean(0).mean()
-
-            for i, name in enumerate(self.MAPCLASSES):
-                for j, thr in enumerate(thresholds):
-                    if metric == 'chamfer':
-                        detail['NuscMap_{}/{}_AP_thr_{}'.format(metric,name,thr)]=cls_aps[j][i]
-                    elif metric == 'iou':
-                        if thr == 0.5 or thr == 0.75:
-                            detail['NuscMap_{}/{}_AP_thr_{}'.format(metric,name,thr)]=cls_aps[j][i]
-
-        return detail
-    
-    def evaluate(self,
-                 results,
-                 metric='chamfer',
-                 logger=None,
-                 show=False,
-                 out_dir=None):
-        """Evaluation in nuScenes protocol.
-
-        Args:
-            results (list[dict]): Testing results of the dataset.
-            metric (str | list[str]): Metrics to be evaluated.
-            logger (logging.Logger | str | None): Logger used for printing
-                related information during evaluation. Default: None.
-            show (bool): Whether to visualize.
-                Default: False.
-            out_dir (str): Path to save the visualization results.
-                Default: None.
-
-        Returns:
-            dict[str, float]: Results of each evaluation metric.
-        """
-        pass
+        car_trans, yaw_pitch_roll, _, _ = self.get_ego_pose(rec)
+        # cam projection matrix
+        lidar2feat = []
+        for i, cam in enumerate(CAMS):
+            post_intrin = post_rots[i] @ intrins[i]
+            l2i = get_proj_mat(post_intrin, rots[i], trans[i])
+            scale_factor = np.eye(4)
+            scale_factor[0, 0] *= 1/self.feat_downsample
+            scale_factor[1, 1] *= 1/self.feat_downsample
+            lidar2feat.append(scale_factor @ l2i)
+        img_shape = np.array(imgs.shape[-2:]) // self.feat_downsample
+        semantic_masks, instance_masks, distance_masks, vertex_masks, vectors, pv_semantic_masks = self.get_vector_map(rec, img_shape, lidar2feat)
+        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, pv_semantic_masks, vectors
     
 def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed=False):
     train_dataset = VectorMapDataset(version, dataroot, data_conf, is_train=True)

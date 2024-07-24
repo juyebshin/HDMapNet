@@ -39,6 +39,9 @@ class SimpleLoss(torch.nn.Module):
         self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([pos_weight]))
 
     def forward(self, ypred, ytgt): # b, 4, 200, 400
+        if ytgt.dim() == 5:
+            B, N, C, imH, imW = ytgt.shape
+            ytgt = ytgt.view(B*N, C, imH, imW)
         loss = self.loss_fn(ypred, ytgt)
         return loss
 

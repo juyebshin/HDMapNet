@@ -69,10 +69,14 @@ def train(args):
         'sinkhorn_iterations': args.sinkhorn_iterations, # 100
         'vertex_threshold': args.vertex_threshold, # 0.015
         'match_threshold': args.match_threshold, # 0.1
+        'pv_seg': args.pv_seg,
+        'pv_seg_classes': args.pv_seg_classes, # 1
+        'feat_downsample': args.feat_downsample, # 16
     }
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
     device = torch.device(args.device)
+    args.device = device
     # BatchNorm1d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm1d
     # BatchNorm2d = torch.nn.SyncBatchNorm if args.distributed else torch.nn.BatchNorm2d
     BatchNorm1d = torch.nn.BatchNorm1d
@@ -92,7 +96,7 @@ def train(args):
     
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
@@ -112,12 +116,12 @@ def train(args):
     sched = StepLR(opt, 10, 0.1)# if 'efficientnet' in args.backbone else CosineAnnealingLR(opt, args.nepochs, eta_min=args.lr*1e-3)
     writer = SummaryWriter(logdir=args.logdir) if utils.is_main_process() else None
 
-    loss_fn = SimpleLoss(args.pos_weight).cuda()
-    embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).cuda()
-    direction_loss_fn = torch.nn.BCELoss(reduction='none')
-    dt_loss_fn = MSEWithReluLoss().cuda()
-    vt_loss_fn = CEWithSoftmaxLoss().cuda()
-    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).cuda()
+    if args.pv_seg: pv_loss_fn = SimpleLoss(args.pos_weight).to(device)
+    if args.instance_seg: embedded_loss_fn = DiscriminativeLoss(args.embedding_dim, args.delta_v, args.delta_d).to(device)
+    if args.direction_pred: direction_loss_fn = torch.nn.BCELoss(reduction='none')
+    if args.distance_reg: dt_loss_fn = MSEWithReluLoss().to(device)
+    vt_loss_fn = CEWithSoftmaxLoss().to(device)
+    graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).to(device)
 
     model.train()
     counter = 0
@@ -128,19 +132,25 @@ def train(args):
         if args.distributed:
             train_loader.batch_sampler.sampler.set_epoch(epoch)
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
-                     yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, vectors_gt) in enumerate(train_loader):
+                     yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt) in enumerate(train_loader):
             # vectors_gt: list of dict {'pts': array, 'pts_num': int, 'type': int}, each element of list is one instance of vectors
             t0 = time()
             opt.zero_grad()
 
-            semantic, distance, vertex, embedding, direction, matches, positions, masks = model(imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(),
-                                                   post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(),
-                                                   lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda())
+            outputs = model(imgs.to(device), trans.to(device), rots.to(device), intrins.to(device),
+                                                   post_trans.to(device), post_rots.to(device), lidar_data.to(device),
+                                                   lidar_mask.to(device), car_trans.to(device), yaw_pitch_roll.to(device))
+            
+            if args.pv_seg:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+            else:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
 
-            semantic_gt = semantic_gt.cuda().float()
-            instance_gt = instance_gt.cuda()
-            distance_gt = distance_gt.cuda()
-            vertex_gt = vertex_gt.cuda().float()
+            semantic_gt = semantic_gt.to(device).float()
+            instance_gt = instance_gt.to(device)
+            distance_gt = distance_gt.to(device)
+            vertex_gt = vertex_gt.to(device).float()
+            pv_semantic_gt = pv_semantic_gt.to(device).float()
 
             vt_loss = vt_loss_fn(vertex, vertex_gt)
 
@@ -152,7 +162,7 @@ def train(args):
                 reg_loss = 0
 
             if args.direction_pred:
-                direction_gt = direction_gt.cuda()
+                direction_gt = direction_gt.to(device)
                 lane_mask = (1 - direction_gt[:, 0]).unsqueeze(1)
                 direction_loss = direction_loss_fn(torch.softmax(direction, 1), direction_gt)
                 direction_loss = (direction_loss * lane_mask).sum() / (lane_mask.sum() * direction_loss.shape[1] + 1e-6)
@@ -168,6 +178,11 @@ def train(args):
                 dt_loss = 0
                 # normalize 0~1?
             
+            if args.pv_seg:
+                pv_seg_loss = pv_loss_fn(pv_seg, pv_semantic_gt)
+            else:
+                pv_seg_loss = 0
+            
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
             if not args.refine:
                 cdist_loss = 0.0
@@ -178,14 +193,16 @@ def train(args):
             # else:
             #     vt_loss = 0
 
-            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match
+            final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + \
+                dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match + \
+                pv_seg_loss * args.scale_pv_seg
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
             # counter += 1
             t1 = time()
 
-            if counter % 10 == 0:
+            if counter % args.log_interval == 0:
                 heatmap = vertex.softmax(1)
                 intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
                 iou = intersects / (union + 1e-7)
@@ -198,13 +215,17 @@ def train(args):
                             f"DT loss: {(dt_loss.item() if args.distance_reg else dt_loss):>7.4f}    "
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
                             f"Match loss: {match_loss.item():>7.4f}    "
+                            f"Ins Var loss: {var_loss.item() if args.instance_seg else var_loss:>7.4f}    "
+                            f"Ins Dist loss: {dist_loss.item() if args.instance_seg else dist_loss:>7.4f}    "
                             f"Seg loss: {seg_loss.item():>7.4f}    "
+                            f"PV Seg loss: {pv_seg_loss.item() if args.pv_seg else pv_seg_loss:>7.4f}    "
                             f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
 
                 if writer is not None:
                     write_log(writer, iou, total_cdist, 'train', counter)
                     writer.add_scalar('train/step_time', t1 - t0, counter)
                     writer.add_scalar('train/seg_loss', seg_loss, counter)
+                    writer.add_scalar('train/pv_seg_loss', pv_seg_loss, counter)
                     writer.add_scalar('train/var_loss', var_loss, counter)
                     writer.add_scalar('train/dist_loss', dist_loss, counter)
                     writer.add_scalar('train/reg_loss', reg_loss, counter)
@@ -287,6 +308,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--log-interval", type=int, default=50)
     parser.add_argument("--vis_interval", type=int, default=200)
 
     # distributed training config
@@ -326,6 +348,8 @@ if __name__ == '__main__':
                         help="Scale of Chamfer distance loss")
     parser.add_argument("--scale_match", type=float, default=0.005, # 1.0
                         help="Scale of matching loss")
+    parser.add_argument("--scale_pv_seg", type=float, default=2.0, # 1.0
+                        help="Scale of pv seg loss")
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true') # store_true
@@ -334,6 +358,11 @@ if __name__ == '__main__':
     # vertex location classification config, always true for VectorMapNet
     parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+    
+    # pv segmentation config
+    parser.add_argument("--pv_seg", action='store_true')
+    parser.add_argument("--pv_seg_classes", type=int, default=1)
+    parser.add_argument("--feat_downsample", type=int, default=16)
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,
