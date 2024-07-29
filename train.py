@@ -23,8 +23,8 @@ import data.utils as utils
 import data.logger
 
 
-def write_log(writer, ious, cdist, title, counter):
-    writer.add_scalar(f'{title}/iou', torch.mean(ious[1:]), counter)
+def write_log(writer, iou, cdist, title, counter):
+    writer.add_scalar(f'{title}/iou', iou, counter)
     writer.add_scalar(f'{title}/cdist', cdist, counter)
 
     # for i, iou in enumerate(ious):
@@ -72,6 +72,7 @@ def train(args):
         'pv_seg': args.pv_seg,
         'pv_seg_classes': args.pv_seg_classes, # 1
         'feat_downsample': args.feat_downsample, # 16
+        'depth_gt': args.depth_gt,
     }
     patch_size = [data_conf['ybound'][1] - data_conf['ybound'][0], data_conf['xbound'][1] - data_conf['xbound'][0]] # (30.0, 60.0)
 
@@ -96,7 +97,7 @@ def train(args):
     
     model_without_ddp = model
     if args.distributed:
-        # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
@@ -132,7 +133,7 @@ def train(args):
         if args.distributed:
             train_loader.batch_sampler.sampler.set_epoch(epoch)
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
-                     yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt) in enumerate(train_loader):
+                     yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, depth_gt, vectors_gt) in enumerate(train_loader):
             # vectors_gt: list of dict {'pts': array, 'pts_num': int, 'type': int}, each element of list is one instance of vectors
             t0 = time()
             opt.zero_grad()
@@ -142,15 +143,16 @@ def train(args):
                                                    lidar_mask.to(device), car_trans.to(device), yaw_pitch_roll.to(device))
             
             if args.pv_seg:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
             else:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
 
             semantic_gt = semantic_gt.to(device).float()
             instance_gt = instance_gt.to(device)
             distance_gt = distance_gt.to(device)
             vertex_gt = vertex_gt.to(device).float()
             pv_semantic_gt = pv_semantic_gt.to(device).float()
+            depth_gt = depth_gt.to(device)
 
             vt_loss = vt_loss_fn(vertex, vertex_gt)
 
@@ -183,6 +185,11 @@ def train(args):
             else:
                 pv_seg_loss = 0
             
+            if args.depth_gt:
+                depth_loss = model_without_ddp.get_depth_loss(depth_gt, depth)
+            else:
+                depth_loss = 0
+            
             cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
             if not args.refine:
                 cdist_loss = 0.0
@@ -195,12 +202,14 @@ def train(args):
 
             final_loss = seg_loss * args.scale_seg + var_loss * args.scale_var + dist_loss * args.scale_dist + direction_loss * args.scale_direction + \
                 dt_loss * args.scale_dt + vt_loss * args.scale_vt + cdist_loss * args.scale_cdist + match_loss * args.scale_match + \
-                pv_seg_loss * args.scale_pv_seg
+                pv_seg_loss * args.scale_pv_seg + depth_loss * args.scale_depth
             final_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
             # counter += 1
             t1 = time()
+            
+            epoch_print = epoch + 1
 
             if counter % args.log_interval == 0:
                 heatmap = vertex.softmax(1)
@@ -208,7 +217,7 @@ def train(args):
                 iou = intersects / (union + 1e-7)
                 cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
                 total_cdist = float((cdist_p + cdist_l)*0.5)
-                logger.info(f"TRAIN[{epoch:>3d}]: [{batchi:>4d}/{last_idx}]    "
+                logger.info(f"TRAIN[{epoch_print:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
                             # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
@@ -219,11 +228,13 @@ def train(args):
                             f"Ins Dist loss: {dist_loss.item() if args.instance_seg else dist_loss:>7.4f}    "
                             f"Seg loss: {seg_loss.item():>7.4f}    "
                             f"PV Seg loss: {pv_seg_loss.item() if args.pv_seg else pv_seg_loss:>7.4f}    "
+                            f"Depth loss: {depth_loss.item() if args.depth_gt else depth_loss:>7.4f}    "
                             f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
 
                 if writer is not None:
-                    write_log(writer, iou, total_cdist, 'train', counter)
+                    write_log(writer, torch.mean(iou), total_cdist, 'train', counter)
                     writer.add_scalar('train/step_time', t1 - t0, counter)
+                    writer.add_scalar('train/depth_loss', depth_loss, counter)
                     writer.add_scalar('train/seg_loss', seg_loss, counter)
                     writer.add_scalar('train/pv_seg_loss', pv_seg_loss, counter)
                     writer.add_scalar('train/var_loss', var_loss, counter)
@@ -250,16 +261,21 @@ def train(args):
                 
             counter += 1
 
-        iou, cdist = eval_iou(model, val_loader, args, writer, epoch, args.vis_interval, utils.is_main_process())
-        logger.info(f"EVAL[{epoch:>2d}]:    "
+        iou, cdist = eval_iou(model, val_loader, args, writer, epoch_print, args.vis_interval, utils.is_main_process())
+        results_dict = {'iou': torch.mean(iou).to(device), 'cdist': torch.tensor(cdist).to(device)}
+        results_dict = utils.reduce_dict(results_dict)
+        iou = results_dict['iou']
+        cdist = results_dict['cdist']
+        logger.info(f"EVAL[{epoch_print:>2d}]:    "
                     # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                     f"CD: {cdist:.4f}")
 
-        if writer is not None: write_log(writer, iou, cdist, 'eval', epoch)
+        if writer is not None: write_log(writer, iou, cdist, 'eval', epoch_print)
         # do not save this to save memory
-        # model_name = os.path.join(args.logdir, f"model{epoch}.pt")
-        # torch.save(model.state_dict(), model_name)
-        # logger.info(f"{model_name} saved")
+        if utils.is_main_process() and args.ckpts_interval > 0 and epoch_print % args.ckpts_interval == 0:
+            model_name = os.path.join(args.logdir, f"model_e{epoch_print}.pt")
+            torch.save(model.module.state_dict(), model_name)
+            logger.info(f"{model_name} saved")
         # mean_iou = float(torch.mean(iou[:-1])) # mean excluding dustbin
 
         # # save best checkpoint
@@ -268,12 +284,12 @@ def train(args):
         #     model_name = os.path.join(args.logdir, "model_best.pt")
         #     torch.save(model.state_dict(), model_name)
         #     logger.info(f"{model_name} saved")
-        if cdist < best_cd:
+        if cdist <= best_cd:
             best_cd = cdist
-            model_name = os.path.join(args.logdir, "model_best.pt")
             if utils.is_main_process():
+                model_name = os.path.join(args.logdir, "model_best.pt")
                 torch.save(model.module.state_dict() if args.distributed else model.state_dict(), model_name)
-            logger.info(f"{model_name} saved")
+                logger.info(f"{model_name} saved")
         
         model.train()
 
@@ -310,6 +326,7 @@ if __name__ == '__main__':
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--log-interval", type=int, default=50)
     parser.add_argument("--vis_interval", type=int, default=200)
+    parser.add_argument("--ckpts-interval", type=int, default=2)
 
     # distributed training config
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
@@ -350,6 +367,8 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
     parser.add_argument("--scale_pv_seg", type=float, default=2.0, # 1.0
                         help="Scale of pv seg loss")
+    parser.add_argument("--scale-depth", type=float, default=3.0, # 1.0
+                        help="Scale of pv seg loss")
 
     # distance transform config
     parser.add_argument("--distance_reg", action='store_true') # store_true
@@ -363,6 +382,9 @@ if __name__ == '__main__':
     parser.add_argument("--pv_seg", action='store_true')
     parser.add_argument("--pv_seg_classes", type=int, default=1)
     parser.add_argument("--feat_downsample", type=int, default=16)
+    
+    # depth map config
+    parser.add_argument("--depth-gt", action='store_true')
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,

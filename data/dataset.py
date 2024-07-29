@@ -82,7 +82,8 @@ class HDMapNetDataset(Dataset):
             sample_token = sample['next']
 
     def get_lidar(self, rec):
-        lidar_data = get_lidar_data(self.nusc, rec, nsweeps=3, min_distance=2.2)
+        '''Get lidar data and mask for a sample projected to ego frame.'''
+        lidar_data = get_lidar_data(self.nusc, rec, nsweeps=5, min_distance=2.2)
         lidar_data = lidar_data.transpose(1, 0)
         num_points = lidar_data.shape[0]
         lidar_data = pad_or_trim_to_np(lidar_data, [81920, 5]).astype('float32')
@@ -158,8 +159,8 @@ class HDMapNetDataset(Dataset):
             imgs.append(img)
 
             sens = self.nusc.get('calibrated_sensor', samp['calibrated_sensor_token'])
-            trans.append(torch.Tensor(sens['translation'])) # tensor.Size([3])
-            rots.append(torch.Tensor(Quaternion(sens['rotation']).rotation_matrix)) # [3, 3]
+            trans.append(torch.Tensor(sens['translation'])) # tensor.Size([3]) cam2ego translation
+            rots.append(torch.Tensor(Quaternion(sens['rotation']).rotation_matrix)) # [3, 3] cam2ego rotation
             intrins.append(torch.Tensor(sens['camera_intrinsic']))
         return torch.stack(imgs), torch.stack(trans), torch.stack(rots), torch.stack(intrins), torch.stack(post_trans), torch.stack(post_rots)
 
@@ -229,6 +230,97 @@ class VectorMapDataset(HDMapNetDataset):
         self.pv_seg = data_conf.get('pv_seg', False)
         self.pv_seg_classes = data_conf.get('pv_seg_classes', 1)
         self.feat_downsample = data_conf.get('feat_downsample', 1)
+        
+        self.depth_gt = data_conf.get('depth_gt', False)
+        self.dbound = data_conf['dbound']
+        self.depth_downsample = data_conf.get('depth_downsample', 1)
+
+    def points2depthmap(self, points, height, width):
+        height, width = height // self.depth_downsample, width // self.depth_downsample
+        depth_map = torch.zeros((height, width), dtype=torch.float32)
+        coor = torch.round(points[:, :2] / self.depth_downsample)
+        depth = points[:, 2]
+        kept1 = (coor[:, 0] >= 0) & (coor[:, 0] < width) & (
+            coor[:, 1] >= 0) & (coor[:, 1] < height) & (
+                depth < self.dbound[1]) & (
+                    depth >= self.dbound[0])
+        coor, depth = coor[kept1], depth[kept1]
+        ranks = coor[:, 0] + coor[:, 1] * width
+        sort = (ranks + depth / 100.).argsort()
+        coor, depth, ranks = coor[sort], depth[sort], ranks[sort]
+
+        kept2 = torch.ones(coor.shape[0], device=coor.device, dtype=torch.bool)
+        kept2[1:] = (ranks[1:] != ranks[:-1])
+        coor, depth = coor[kept2], depth[kept2]
+        coor = coor.to(torch.long)
+        depth_map[coor[:, 1], coor[:, 0]] = depth
+        return depth_map
+    
+    def get_lidar_depth(self, 
+                        rec, 
+                        lidar_data, 
+                        lidar_mask,
+                        imgs,
+                        trans, # cam2ego [6, 3]
+                        rots, # cam2ego [6, 3, 3]
+                        intrins,
+                        post_trans, # [6, 3]
+                        post_rots, # [6, 3, 3]
+                        ):
+        points_lidar = torch.tensor(lidar_data[lidar_mask > 0, :3]).to(torch.float32)
+        sd_rec = self.nusc.get('sample_data', rec['data']['LIDAR_TOP'])
+        pose_record = self.nusc.get('ego_pose', sd_rec['ego_pose_token'])
+        # lidarego to global transform only, since lidar is already projected to lidarego
+        lidarego2global = np.eye(4, dtype=np.float32)
+        lidarego2global[:3, :3] = Quaternion(pose_record['rotation']).rotation_matrix
+        lidarego2global[:3, 3] = pose_record['translation']
+        lidarego2global = torch.from_numpy(lidarego2global)
+        depth_map_list = []
+        
+        for cid in range(len(imgs)):
+            cam = CAMS[cid]
+            cam_sd_rec = self.nusc.get('sample_data', rec['data'][cam])
+            cam_cs_record = self.nusc.get('calibrated_sensor',
+                                cam_sd_rec['calibrated_sensor_token'])
+            cam_pose_record = self.nusc.get('ego_pose', cam_sd_rec['ego_pose_token'])
+            # camera to ego transform
+            cam2camego = np.eye(4).astype(np.float32)
+            cam2camego[:3, :3] = Quaternion(cam_cs_record['rotation']).rotation_matrix
+            cam2camego[:3, 3] = cam_cs_record['translation']
+            cam2camego = torch.tensor(cam2camego) # 4x4
+            # camego to global transform
+            camego2global = np.eye(4, dtype=np.float32)
+            camego2global[:3, :3] = Quaternion(cam_pose_record['rotation']).rotation_matrix
+            camego2global[:3, 3] = cam_pose_record['translation']
+            camego2global = torch.from_numpy(camego2global)
+            # intrinsic
+            camera_intrinsics = np.eye(4).astype(np.float32)
+            camera_intrinsics[:3, :3] = intrins[cid]
+            cam2img = torch.tensor(camera_intrinsics).to(torch.float32)
+            
+            lidar2cam = torch.inverse(camego2global.matmul(cam2camego)).matmul(
+                lidarego2global)
+            lidar2img = cam2img.matmul(lidar2cam)
+
+            points_img = points_lidar.matmul(
+                lidar2img[:3, :3].T.to(torch.float)) + lidar2img[:3, 3].to(torch.float).unsqueeze(0)
+            points_img = torch.cat(
+                [points_img[:, :2] / points_img[:, 2:3], points_img[:, 2:3]],
+                1)
+            # points_pad = torch.ones((points_lidar.shape[0], 1)).to(points_lidar.dtype)
+            # points_pad = torch.cat((points_lidar, points_pad), -1)
+            # points_img_homo = points_pad.matmul(
+            #     lidar2img.T.to(torch.float))
+            # points_img_homo = points_img_homo / points_img_homo[:, -1].unsqueeze(-1)
+            # points_img = points_img_homo[:, :-1]
+            points_img = points_img.matmul(
+                post_rots[cid].T) + post_trans[cid, :]
+            depth_map = self.points2depthmap(points_img, imgs.shape[2],
+                                             imgs.shape[3])
+            depth_map_list.append(depth_map)
+        depth_map = torch.stack(depth_map_list)
+        
+        return depth_map
 
     def get_vector_map(self, rec, img_shape=None, lidar2feat=None):
         vectors = self.get_vectors(rec)
@@ -247,6 +339,10 @@ class VectorMapDataset(HDMapNetDataset):
         imgs, trans, rots, intrins, post_trans, post_rots = self.get_imgs(rec)
         lidar_data, lidar_mask = self.get_lidar(rec)
         car_trans, yaw_pitch_roll = self.get_ego_pose(rec)
+        # lidar depth map
+        depth_map = torch.zeros((imgs.shape[0])).to(torch.float)
+        if self.depth_gt:
+            depth_map = self.get_lidar_depth(rec, lidar_data, lidar_mask, imgs, trans, rots, intrins, post_trans, post_rots)
         # cam projection matrix
         lidar2feat = []
         for i, cam in enumerate(CAMS):
@@ -258,7 +354,7 @@ class VectorMapDataset(HDMapNetDataset):
             lidar2feat.append(scale_factor @ l2i)
         img_shape = np.array(imgs.shape[-2:]) // self.feat_downsample
         semantic_masks, instance_masks, distance_masks, vertex_masks, vectors, pv_semantic_masks = self.get_vector_map(rec, img_shape, lidar2feat)
-        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, pv_semantic_masks, vectors
+        return imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, vertex_masks, pv_semantic_masks, depth_map, vectors
     
 def vectormap_dataset(version, dataroot, data_conf, bsz, nworkers, distributed=False):
     train_dataset = VectorMapDataset(version, dataroot, data_conf, is_train=True)

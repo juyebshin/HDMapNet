@@ -157,10 +157,9 @@ class UpDT(nn.Module):
 
 
 class CamEncode(nn.Module):
-    def __init__(self, C, D=None, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d, pv_seg=False, pv_seg_classes=1):
+    def __init__(self, C, backbone='efficientnet-b4', norm_layer=nn.BatchNorm2d, pv_seg=False, pv_seg_classes=1):
         super(CamEncode, self).__init__()
         self.C = C
-        self.D = D
         self.backbone = backbone
         self.pv_seg = pv_seg
 
@@ -187,8 +186,6 @@ class CamEncode(nn.Module):
             raise NotImplementedError
 
         self.up1 = Up(channel, self.C, norm_layer=norm_layer) # 320+112
-        if D is not None:
-            self.depthnet = nn.Conv2d(self.C, D + self.C, kernel_size=1, padding=0)
 
         """
         b0
@@ -280,15 +277,15 @@ class CamEncode(nn.Module):
         else:
             raise NotImplementedError
 
-        if self.D is not None:
-            depth_x = self.depthnet(x) # B*N, 41+64, 8, 22
+        # if self.D is not None:
+        #     depth_x = self.depthnet(x) # B*N, 41+64, 8, 22
 
-            depth = self.get_depth_dist(depth_x[:, :self.D]) # B*N, 41, 8, 22
-            new_x = depth.unsqueeze(1) * depth_x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
+        #     depth = self.get_depth_dist(depth_x[:, :self.D]) # B*N, 41, 8, 22
+        #     new_x = depth.unsqueeze(1) * depth_x[:, self.D:(self.D + self.C)].unsqueeze(2) # [B*N, 1, 41, 8, 22] * [B*N, 64, 1, 8, 22]
 
-            return x, new_x # [B*N, 64, 41, 8, 22]
-        else:
-            return x
+        #     return x, new_x # [B*N, 64, 41, 8, 22]
+        # else:
+        return x
 
     def forward(self, x):
         x = self.get_depth_feat(x)

@@ -5,17 +5,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 import csv
+import cv2
 
-from data.dataset import VectorMapDataset, CAMS
+from data.dataset import VectorMapDataset
+from data.const import CAMS
 from data.utils import get_proj_mat, perspective
 from data.image import denormalize_img
 
 
-def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
+def vis_label(dataroot, version, xbound, ybound, dbound, sample_dist, is_train):
     data_conf = {
         'image_size': (256, 704),
         'xbound': xbound,
         'ybound': ybound,
+        'dbound': dbound,
         'sample_dist': sample_dist, # 1.5
         'thickness': 5,
         'angle_class': 36,
@@ -24,6 +27,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
         'pv_seg': True,
         'pv_seg_classes': 1,
         'feat_downsample': 16,
+        'depth_gt': True,
     }
 
     color_map = np.random.randint(0, 256, (256, 3))
@@ -54,7 +58,7 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
         # vectors = dataset.get_vectors(rec)
         imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, \
         car_trans, yaw_pitch_roll, semantic_masks, instance_masks, distance_masks, \
-        vertex_masks, pv_semantic_masks, vectors = dataset[idx]
+        vertex_masks, pv_semantic_masks, depth_maps, vectors = dataset[idx]
 
         lidar_top_path = dataset.nusc.get_sample_data_path(rec['data']['LIDAR_TOP'])
 
@@ -107,8 +111,10 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
         # map_path = os.path.join(base_path, 'VERTEX.png')
         # plt.savefig(map_path, bbox_inches='tight', pad_inches=0, dpi=1200)
         # plt.close()
+        
+        gt_depth_surround = np.zeros((depth_maps.shape[1]*2, depth_maps.shape[2]*3, 3), np.uint8)
 
-        for img, intrin, rot, tran, cam in zip(imgs, intrins, rots, trans, CAMS):
+        for img, intrin, rot, tran, depth_map, cam in zip(imgs, intrins, rots, trans, depth_maps, CAMS):
             img = denormalize_img(img)
             intrin = intrin_scale @ intrin.numpy()
             P = get_proj_mat(intrin, rot, tran)
@@ -150,6 +156,25 @@ def vis_label(dataroot, version, xbound, ybound, sample_dist, is_train):
             pv_cam_path = os.path.join(base_path, f'pv_mask_{cam}.png')
             plt.savefig(pv_cam_path, bbox_inches='tight', pad_inches=0, dpi=400)
             plt.close()
+            
+            image = np.asarray(img)
+            gt_depth_image = depth_map.numpy()
+            gt_depth_image = np.expand_dims(gt_depth_image,2).repeat(3,2)
+            
+            #apply colormap on deoth image(image must be converted to 8-bit per pixel first)
+            im_color=cv2.applyColorMap(cv2.convertScaleAbs(gt_depth_image,alpha=15),cv2.COLORMAP_JET)
+            #convert to mat png
+            image[gt_depth_image>0] = im_color[gt_depth_image>0]
+            im=Image.fromarray(np.uint8(image))
+            #save image
+            gt_depth_path = os.path.join(base_path, f'gt_depth_{cam}.png')
+            im.save(gt_depth_path)
+            
+            idx = CAMS.index(cam)
+            gt_depth_surround[image.shape[0]*(idx//3):image.shape[0]*(idx//3)+image.shape[0], 
+                              image.shape[1]*(idx%3):image.shape[1]*(idx%3)+image.shape[1]] = image
+        gt_depth_surround_path = os.path.join(base_path, 'gt_depth_surround.png')
+        Image.fromarray(np.uint8(gt_depth_surround)).save(gt_depth_surround_path)
     
     prefix = 'train' if is_train else 'val'
     if xbound[1] > 30:
@@ -166,8 +191,10 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
     parser.add_argument("--xbound", nargs=3, type=float, default=[-30.0, 30.0, 0.15])
     parser.add_argument("--ybound", nargs=3, type=float, default=[-15.0, 15.0, 0.15])
+    parser.add_argument("--dbound", nargs=3, type=float, default=[1.0, 35.0, 0.5])
     parser.add_argument("--sample_dist", type=float, default=1.5)
+    parser.add_argument("--depth-gt", action='store_true')
     parser.add_argument("--is_train", action='store_true')
     args = parser.parse_args()
 
-    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.sample_dist, args.is_train)
+    vis_label(args.dataroot, args.version, args.xbound, args.ybound, args.dbound, args.sample_dist, args.is_train)

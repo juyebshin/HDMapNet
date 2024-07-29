@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import torchvision
+import mmcv
 from tensorboardX import SummaryWriter
 
 from data.dataset import semantic_dataset, vectormap_dataset
@@ -15,6 +16,10 @@ from model import get_model
 from data.visualize import colorise, colors_plt
 from data.image import denormalize_img
 from loss import GraphLoss, gen_dx_bx
+from postprocess.vectorize import vectorize_graph
+from evaluate_json import get_val_info
+from data.utils import all_gather
+from os import path as osp
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -41,6 +46,23 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     writer.add_image(f'{title}/images', imgs_grid, step, dataformats='HWC')
 
     dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
+
+    # vectors_gt: [b] list of [instance] list of dict
+    vectors_gt = vectors_gt[0]
+    fig = plt.figure()
+    plt.xlim(args.xbound[0], args.xbound[1])
+    plt.ylim(args.ybound[0], args.ybound[1])
+    plt.axis('off')
+
+    for vector in vectors_gt:
+        pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
+        pts = pts[:pts_num]
+        x = np.array([pt[0] for pt in pts])
+        y = np.array([pt[1] for pt in pts])
+        plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
+    
+    writer.add_figure(f'{title}/vector_gt', fig, step)
+    plt.close()
 
 
     if dt is not None:
@@ -86,7 +108,6 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         # positions: [b, N, 2], x y
         # masks: [b, N, 1]
         # attentions: [b, L, H, N, N] L: 7 layers, H: 4 heads
-        # vectors_gt: [b] list of [instance] list of dict
         # matches_gt: [b, N, N+1]
         # xbound: []
         # ybound: []
@@ -95,7 +116,6 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         masks = masks[0].detach().cpu().int().numpy().squeeze(-1) # [N]
         # attentions = attentions[0].detach().cpu().float().numpy()[-1] # [H, N, N] attention of the last layer
         masks_bins = np.concatenate([masks, [1]], 0) # [N + 1]
-        vectors_gt = vectors_gt[0]
         matches_gt = matches_gt.detach().cpu().float().numpy()[0] # [N+1, N+1]
         positions = positions * dx + bx # [30, 60]
         positions_valid = positions[masks == 1] # [M, 3]
@@ -122,21 +142,6 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         #                        color=colorise(matches[i, match], 'jet', 0.0, 1.0), scale_units='xy', angles='xy', scale=1)
         
         writer.add_figure(f'{title}/vector_pred', fig, step)
-        plt.close()
-
-        fig = plt.figure()
-        plt.xlim(args.xbound[0], args.xbound[1])
-        plt.ylim(args.ybound[0], args.ybound[1])
-        plt.axis('off')
-
-        for vector in vectors_gt:
-            pts, pts_num, line_type = vector['pts'], vector['pts_num'], vector['type']
-            pts = pts[:pts_num]
-            x = np.array([pt[0] for pt in pts])
-            y = np.array([pt[1] for pt in pts])
-            plt.quiver(x[:-1], y[:-1], x[1:] - x[:-1], y[1:] - y[:-1], scale_units='xy', angles='xy', scale=1, color=colors_plt[line_type])
-        
-        writer.add_figure(f'{title}/vector_gt', fig, step)
         plt.close()
 
         # Attention
@@ -242,16 +247,16 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
     total_cdist_p = 0.0
     total_cdist_l = 0.0
     with torch.no_grad():
-        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt in tqdm.tqdm(val_loader):
+        for imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, depth_gt, vectors_gt in tqdm.tqdm(val_loader):
 
             outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
                                                 post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
                                                 lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
             
             if args.pv_seg:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
             else:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
 
             heatmap = vertex.softmax(1) # b, 65, 25, 50
             matches = matches.exp() # b, N+1, N+1
@@ -281,6 +286,66 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
     total_cdist = float((total_cdist_p + total_cdist_l)*0.5)
     print(f'CD_p: {total_cdist_p:.4f}, CD_l: {total_cdist_l:.4f}, CD: {total_cdist:.4f}')
     return total_intersects / (total_union + 1e-7), total_cdist
+
+def eval_map(model, val_loader, args, writer=None, step=None, vis_interval=0, is_master=False):
+    # st
+    dx, bx, nx = gen_dx_bx(args.xbound, args.ybound)
+
+    model.eval()
+    counter = 0
+    tokens_list = []
+    results_list = []
+    with torch.no_grad():
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, depth_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
+
+            outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
+                                                post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
+                                                lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
+            
+            if args.pv_seg:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
+            else:
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
+
+            for si in range(imgs.shape[0]):
+                coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], args.match_threshold)
+                result = {}
+                vectors = []
+                for coord, confidence, line_type in zip(coords, confidences, line_types):
+                    vector = {'pts': coord * dx + bx, 'pts_num': len(coord), "type": line_type, "confidence_level": confidence}
+                    vectors.append(vector)
+                rec = val_loader.dataset.samples[batchi * val_loader.batch_size + si]
+                tokens_list.append(rec['token'])
+                results_list.append(vectors)
+
+            if writer is not None and vis_interval > 0:
+                if counter % vis_interval == 0 and is_master:  
+                        # vertex_gt = vertex_gt.to(args.device).float() # b, 65, 25, 50
+                        visualize(writer, 'eval', imgs, None, None, vectors_gt, None, None, None, None, None, None, None, None, results_list, step, args)
+            
+            counter += 1
+        
+    if is_master:
+        submission = {
+            "meta": {
+                "use_camera": True,
+                "use_lidar": False,
+                "use_radar": False,
+                "use_external": False,
+                "vector": True,
+            },
+            "results": []
+        }
+        all_results_list = all_gather(results_list)
+        all_tokens_list = all_gather(tokens_list)
+        
+        for tokens, results in zip(all_tokens_list, all_results_list):
+            for token, result in zip(tokens, results):
+                submission["results"].append({"sample_token": token, "vectors": result})
+        
+        args.result_path = osp.join(osp.join(*osp.split(args.modelf)[:-1]), 'vector_submission.json')
+        mmcv.dump(submission, args.result_path)
+        print(f"Results file saved to {args.result_path}")
 
 
 def main(args):

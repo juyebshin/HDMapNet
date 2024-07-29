@@ -65,15 +65,15 @@ def export_results_to_json(model, val_loader, angle_class, args):
 
     model.eval()
     with torch.no_grad():
-        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
+        for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, semantic_gt, instance_gt, distance_gt, vertex_gt, pv_semantic_gt, depth_gt, vectors_gt) in enumerate(tqdm.tqdm(val_loader)):
             outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
                                                        post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
                                                        lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
             
             if args.pv_seg:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, pv_seg = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
             else:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction = outputs
+                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
 
             for si in range(imgs.shape[0]):
                 coords, confidences, line_types = vectorize_graph(positions[si], matches[si], semantic[si], masks[si], args.match_threshold)
@@ -118,6 +118,7 @@ def main(args):
         'pv_seg': args.pv_seg,
         'pv_seg_classes': args.pv_seg_classes, # 1
         'feat_downsample': args.feat_downsample, # 16
+        'depth_gt': args.depth_gt,
     }
     device = torch.device(args.device)
     args.device = device
@@ -185,6 +186,9 @@ if __name__ == '__main__':
     parser.add_argument("--pv_seg", action='store_true')
     parser.add_argument("--pv_seg_classes", type=int, default=1)
     parser.add_argument("--feat_downsample", type=int, default=16)
+    
+    # depth map config
+    parser.add_argument("--depth-gt", action='store_true')
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,
