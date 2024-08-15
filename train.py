@@ -365,9 +365,9 @@ if __name__ == '__main__':
                         help="Scale of Chamfer distance loss")
     parser.add_argument("--scale_match", type=float, default=0.005, # 1.0
                         help="Scale of matching loss")
-    parser.add_argument("--scale_pv_seg", type=float, default=2.0, # 1.0
+    parser.add_argument("--scale_pv_seg", type=float, default=1.5, # 1.0
                         help="Scale of pv seg loss")
-    parser.add_argument("--scale-depth", type=float, default=3.0, # 1.0
+    parser.add_argument("--scale-depth", type=float, default=2.0, # 1.0
                         help="Scale of pv seg loss")
 
     # distance transform config
