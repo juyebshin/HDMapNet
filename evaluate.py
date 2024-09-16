@@ -1,5 +1,6 @@
 import argparse
 import tqdm
+import os
 
 import torch
 import numpy as np
@@ -19,7 +20,9 @@ from loss import GraphLoss, gen_dx_bx
 from postprocess.vectorize import vectorize_graph
 from evaluate_json import get_val_info
 from data.utils import all_gather
+import data.logger
 from os import path as osp
+import cv2
 
 def onehot_encoding(logits, dim=1):
     # logits: b, C, 200, 400
@@ -29,8 +32,8 @@ def onehot_encoding(logits, dim=1):
     return one_hot
 
 def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.Tensor, vt_mask: torch.Tensor, 
-                vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, 
-                dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, 
+                vectors_gt: list, matches_gt: torch.Tensor, semantics_gt: torch.Tensor, depths_gt: torch.Tensor,
+                dt: torch.Tensor, heatmap: torch.Tensor, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, depths: torch.Tensor,
                 masks: torch.Tensor, step: int, args):
     if writer is None:
         return
@@ -39,7 +42,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
     # heatmap: b, 65, 25, 50 tensor
     imgs = imgs.detach().cpu().float()[0] # 6, 3, 128, 352
     # imgs = imgs.fliplr()
-    imgs[3:] = torch.flip(imgs[3:], [3,])
+    # imgs[3:] = torch.flip(imgs[3:], [3,])
     # imgs = torch.index_select(imgs, 0, torch.LongTensor([0, 1, 2, 5, 4, 3]))
     imgs_grid = torchvision.utils.make_grid(imgs, nrow=3) # 3, 262, 1064
     imgs_grid = np.array(denormalize_img(imgs_grid)) # 262, 1064, 3
@@ -233,6 +236,29 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         
         writer.add_figure(f'{title}/vector_semantic_gt', fig, step)
         plt.close()
+        
+    if depths_gt is not None:
+        B, _, _, _ = depths_gt.shape
+        _, D, H, W = depths.shape
+        depths = depths.view(B, -1, D, H, W)
+        depth_gt = depths_gt[0].detach().cpu().float().numpy() # [N, H, W]
+        depth = depths[0].detach().cpu().float().numpy() # [N, D, h, w]
+        
+        depth_onehot = depth.argmax(1)
+        gt_depth_surround = np.zeros((depth_gt.shape[1]*2, depth_gt.shape[2]*3, 3), np.uint8)
+        pred_depth_surround = np.zeros((depth_onehot.shape[1]*2, depth_onehot.shape[2]*3), np.float32)
+        for idx, (img_, depth_gt_, depth_) in enumerate(zip(imgs, depth_gt, depth_onehot)):
+            gt_depth_image = np.expand_dims(depth_gt_,2).repeat(3,2)
+            im_color=cv2.applyColorMap(cv2.convertScaleAbs(gt_depth_image,alpha=15),cv2.COLORMAP_JET)
+            image = np.array(denormalize_img(img_))
+            image[gt_depth_image>0] = im_color[gt_depth_image>0]
+            gt_depth_surround[image.shape[0]*(idx//3):image.shape[0]*(idx//3)+image.shape[0], 
+                              image.shape[1]*(idx%3):image.shape[1]*(idx%3)+image.shape[1]] = image
+            pred_depth_image = depth_.astype(np.float32) / (D-1)
+            pred_depth_surround[pred_depth_image.shape[0]*(idx//3):pred_depth_image.shape[0]*(idx//3)+pred_depth_image.shape[0], 
+                              pred_depth_image.shape[1]*(idx%3):pred_depth_image.shape[1]*(idx%3)+pred_depth_image.shape[1]] = pred_depth_image
+        writer.add_image(f'{title}/depth_gt', gt_depth_surround, step, dataformats='HWC')
+        writer.add_image(f'{title}/depth_pred', colorise(1.0-pred_depth_surround, 'jet', 0.0, 1.0), step, dataformats='HWC')
 
 
 
@@ -278,7 +304,7 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
                         # distance_gt = distance_gt.to(args.device) # b, 3, 200, 400
                         heatmap_onehot = onehot_encoding(heatmap)
                         # vertex_gt = vertex_gt.to(args.device).float() # b, 65, 25, 50
-                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, step, args)
+                        visualize(writer, 'eval', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, depth_gt, distance, heatmap, matches, positions, semantic, depth, masks, step, args)
             
             counter += 1
 
@@ -349,6 +375,12 @@ def eval_map(model, val_loader, args, writer=None, step=None, vis_interval=0, is
 
 
 def main(args):
+    if not os.path.exists(args.logdir):
+        os.mkdir(args.logdir)
+
+    logger = data.logger.setup_logger('vectorized map learning', args.logdir, True, "results.log")
+    logger.info(args)
+    
     data_conf = {
         'num_channels': NUM_CLASSES + 1,
         'image_size': args.image_size,
@@ -369,13 +401,23 @@ def main(args):
         'sinkhorn_iterations': args.sinkhorn_iterations, # 100
         'vertex_threshold': args.vertex_threshold, # 0.015
         'match_threshold': args.match_threshold, # 0.2
+        'pv_seg': args.pv_seg,
+        'pv_seg_classes': args.pv_seg_classes, # 1
+        'feat_downsample': args.feat_downsample, # 16
+        'depth_gt': args.depth_gt,
     }
+    
+    writer = SummaryWriter(logdir=args.logdir)
 
+    BatchNorm1d = torch.nn.BatchNorm1d
+    BatchNorm2d = torch.nn.BatchNorm2d
+    norm_layer_dict = {'1d': BatchNorm1d, '2d': BatchNorm2d}
+    
     train_loader, val_loader = vectormap_dataset(args.version, args.dataroot, data_conf, args.bsz, args.nworkers)
-    model = get_model(args.model, data_conf, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
+    model = get_model(args.model, data_conf, norm_layer_dict, args.segmentation, args.instance_seg, args.embedding_dim, args.direction_pred, args.angle_class, args.distance_reg, args.vertex_pred, args.refine)
     model.load_state_dict(torch.load(args.modelf), strict=False)
     model.to(args.device)
-    print(eval_iou(model, val_loader))
+    print(eval_iou(model, val_loader, args, writer, 0, args.vis_interval, True))
 
 
 if __name__ == '__main__':
@@ -384,7 +426,7 @@ if __name__ == '__main__':
     parser.add_argument("--logdir", type=str, default='./runs')
 
     # nuScenes config
-    parser.add_argument('--dataroot', type=str, default='/home/user/data/Dataset/nuscenes/v1.0-trainval/')
+    parser.add_argument('--dataroot', type=str, default='./nuscenes')
     parser.add_argument('--version', type=str, default='v1.0-trainval', choices=['v1.0-trainval', 'v1.0-mini'])
 
     # model config
@@ -402,6 +444,7 @@ if __name__ == '__main__':
     parser.add_argument("--nworkers", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
+    parser.add_argument("--vis_interval", type=int, default=200)
 
     # finetune config
     parser.add_argument('--finetune', action='store_true')
@@ -438,12 +481,20 @@ if __name__ == '__main__':
                         help="Scale of matching loss")
 
     # distance transform config
-    parser.add_argument("--distance_reg", action='store_false')
+    parser.add_argument("--distance_reg", action='store_true')
     parser.add_argument("--dist_threshold", type=float, default=10.0)
 
     # vertex location classification config
     parser.add_argument("--vertex_pred", action='store_false')
     parser.add_argument("--cell_size", type=int, default=8)
+    
+    # pv segmentation config
+    parser.add_argument("--pv_seg", action='store_true')
+    parser.add_argument("--pv_seg_classes", type=int, default=1)
+    parser.add_argument("--feat_downsample", type=int, default=16)
+    
+    # depth map config
+    parser.add_argument("--depth-gt", action='store_true')
 
     # positional encoding frequencies
     parser.add_argument("--pos_freq", type=int, default=10,

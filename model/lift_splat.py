@@ -189,7 +189,7 @@ class LiftSplat(nn.Module):
         self.pv_seg = data_conf['pv_seg']
 
         self.downsample = 16
-        self.camC = 64 if 'efficientnet' in data_conf['backbone'] else 256        
+        self.camC = 256# 64 if 'efficientnet' in data_conf['backbone'] else 256        
         self.lidar = lidar
         self.frustum = self.create_frustum()
         # D x H/downsample x D/downsample x 3

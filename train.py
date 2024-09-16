@@ -257,7 +257,7 @@ def train(args):
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
                     matches = matches.exp()
-                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, distance, heatmap, matches, positions, semantic, masks, counter, args)
+                    visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, depth_gt, distance, heatmap, matches, positions, semantic, depth, masks, counter, args)
                 
             counter += 1
 
@@ -345,7 +345,7 @@ if __name__ == '__main__':
     parser.add_argument("--sample_dist", type=float, default=1.5) # 1.5
 
     # embedding config
-    parser.add_argument('--instance_seg', action='store_true')
+    parser.add_argument('--instance-seg', action='store_true')
     parser.add_argument("--embedding_dim", type=int, default=16)
     parser.add_argument("--delta_v", type=float, default=0.5)
     parser.add_argument("--delta_d", type=float, default=3.0)
