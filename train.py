@@ -274,7 +274,7 @@ def train(args):
         # do not save this to save memory
         if utils.is_main_process() and args.ckpts_interval > 0 and epoch_print % args.ckpts_interval == 0:
             model_name = os.path.join(args.logdir, f"model_e{epoch_print}.pt")
-            torch.save(model.module.state_dict(), model_name)
+            torch.save(model.module.state_dict() if args.distributed else model.state_dict(), model_name)
             logger.info(f"{model_name} saved")
         # mean_iou = float(torch.mean(iou[:-1])) # mean excluding dustbin
 

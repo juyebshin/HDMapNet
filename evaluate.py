@@ -237,7 +237,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
         writer.add_figure(f'{title}/vector_semantic_gt', fig, step)
         plt.close()
         
-    if depths_gt is not None:
+    if depths_gt.ndim == 4:
         B, _, _, _ = depths_gt.shape
         _, D, H, W = depths.shape
         depths = depths.view(B, -1, D, H, W)
