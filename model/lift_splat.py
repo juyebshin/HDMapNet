@@ -393,18 +393,24 @@ class LiftSplat(nn.Module):
 
         return x, depth_x, depth
 
-    def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll):
+    def forward(self, x, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans, yaw_pitch_roll, return_gnn_outputs=True):
         # imgs.cuda(), trans.cuda(), rots.cuda(), intrins.cuda(), post_trans.cuda(), post_rots.cuda(), lidar_data.cuda(), lidar_mask.cuda(), car_trans.cuda(), yaw_pitch_roll.cuda()
         x, depth_x, depth = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
         if self.lidar:
             lidar_feature = self.pp(lidar_data, lidar_mask)
             depth_x = torch.cat([depth_x, lidar_feature], dim=1)
         x_seg, x_dt, x_vertex, x_embedded, x_direction = self.bevencode(depth_x)
-        semantic, distance, vertex, matches, positions, masks = self.head(x_dt, x_vertex)
-        if self.pv_seg:
-            pv_seg = self.pv_seg_head(x)
-            return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction, depth, pv_seg
-        return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction, depth
+        if return_gnn_outputs:
+            semantic, distance, vertex, matches, positions, masks = self.head(x_dt, x_vertex)
+            if self.pv_seg:
+                pv_seg = self.pv_seg_head(x)
+                return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction, depth, pv_seg
+            return semantic, distance, vertex, matches, positions, masks, x_embedded, x_direction, depth
+        else:
+            if self.pv_seg:
+                pv_seg = self.pv_seg_head(x)
+                return x_dt, x_vertex, x_embedded, x_direction, depth, pv_seg
+            return x_dt, x_vertex, x_embedded, x_direction, depth
 
 class _ASPPModule(nn.Module):
 

@@ -102,6 +102,33 @@ def top_k_vertices(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int)
     mask = torch.ones([k], dtype=torch.uint8, device=vertices.device) # [K]
     return vertices[indices], scores, embeddings[indices], mask # [K, 2], [K], [K]
 
+def top_k_vertices_with_duplicates(vertices: Tensor, scores: Tensor, embeddings: Tensor, k: int, duplicates: int=1):
+    """
+    Returns top-K vertices repeated by 'duplicates' times.
+    [a, b, ...] -> [a, a, b, b, ...]
+
+    vertices: [N, 2] tensor (N vertices in xy)
+    scores: [N] tensor (N vertex scores)
+    embeddings: [N, 64] tensor
+    """
+    # k: 400
+    n_vertices = len(vertices) # N
+    embedding_dim = embeddings.shape[1]
+    if k >= n_vertices:
+        pad_size = k - n_vertices # k - N
+        pad_v = torch.ones([pad_size, 2], device=vertices.device, requires_grad=False)
+        pad_s = torch.ones([pad_size], device=scores.device, requires_grad=False)
+        pad_dt = torch.ones([pad_size, embedding_dim], device=embeddings.device, requires_grad=False)
+        vertices, scores, embeddings = vertices.repeat_interleave(duplicates,0), scores.repeat_interleave(duplicates), embeddings.repeat_interleave(duplicates,0) # duplicates*N
+        pad_v, pad_s, pad_dt = pad_v.repeat_interleave(duplicates,0), pad_s.repeat_interleave(duplicates), pad_dt.repeat_interleave(duplicates,0) # duplicates*(k - N)
+        vertices, scores, embeddings = torch.cat([vertices, pad_v], dim=0), torch.cat([scores, pad_s], dim=0), torch.cat([embeddings, pad_dt], dim=0) # duplicates*k
+        mask = torch.zeros([duplicates*k], dtype=torch.uint8, device=vertices.device)
+        mask[:duplicates*n_vertices] = 1
+        return vertices, scores, embeddings, mask # [K, 2], [K], [K]
+    scores, indices = torch.topk(scores, k, dim=0)
+    mask = torch.ones([duplicates*k], dtype=torch.uint8, device=vertices.device) # [K]
+    return vertices[indices].repeat_interleave(duplicates,0), scores.repeat_interleave(duplicates), embeddings[indices].repeat_interleave(duplicates,0), mask # [duplicates*K, 2], [duplicates*K], [duplicates*K]
+
 def attention(query, key, value, mask=None):
     # q, k, v: [b, 64, 4, N], mask: [b, 1, N]
     dim = query.shape[1] # 64

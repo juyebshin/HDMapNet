@@ -262,7 +262,7 @@ def visualize(writer: SummaryWriter, title, imgs: torch.Tensor, dt_mask: torch.T
 
 
 
-def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is_master=False):
+def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is_master=False, return_gnn_outputs=False):
     # st
     graph_loss_fn = GraphLoss(args.xbound, args.ybound, num_classes=NUM_CLASSES).to(args.device)
 
@@ -277,25 +277,38 @@ def eval_iou(model, val_loader, args, writer=None, step=None, vis_interval=0, is
 
             outputs = model(imgs.to(args.device), trans.to(args.device), rots.to(args.device), intrins.to(args.device),
                                                 post_trans.to(args.device), post_rots.to(args.device), lidar_data.to(args.device),
-                                                lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device))
+                                                lidar_mask.to(args.device), car_trans.to(args.device), yaw_pitch_roll.to(args.device), return_gnn_outputs)
             
-            if args.pv_seg:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
+            if return_gnn_outputs:
+                if args.pv_seg:
+                    semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
+                else:
+                    semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
             else:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
+                if args.pv_seg:
+                    distance, vertex, embedding, direction, depth, pv_seg = outputs
+                else:
+                    distance, vertex, embedding, direction, depth = outputs
 
             heatmap = vertex.softmax(1) # b, 65, 25, 50
-            matches = matches.exp() # b, N+1, N+1
             vertex_gt = vertex_gt.to(args.device).float() # b, 65, 25, 50
             intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
             total_intersects += intersects
             total_union += union
 
-            cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
-            total_cdist_p += cdist_p
-            total_cdist_l += cdist_l
-
-            _, _, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            if return_gnn_outputs:
+                cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
+                total_cdist_p += cdist_p
+                total_cdist_l += cdist_l
+                matches = matches.exp() # b, N+1, N+1
+                _, _, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+            else:
+                matches_gt = None
+                vector_semantics_gt = None
+                matches = None
+                positions = None
+                masks = None
+                semantic = None
 
             if writer is not None and vis_interval > 0:
                 if counter % vis_interval == 0 and is_master:                

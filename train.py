@@ -129,7 +129,8 @@ def train(args):
     best_iou = 0.0
     best_cd = 10.0
     last_idx = len(train_loader) - 1
-    for epoch in range(args.nepochs):
+    for epoch in range(args.nepochs):            
+        return_gnn_outputs = epoch > (args.nepochs // 2 - 1)
         if args.distributed:
             train_loader.batch_sampler.sampler.set_epoch(epoch)
         for batchi, (imgs, trans, rots, intrins, post_trans, post_rots, lidar_data, lidar_mask, car_trans,
@@ -140,12 +141,18 @@ def train(args):
 
             outputs = model(imgs.to(device), trans.to(device), rots.to(device), intrins.to(device),
                                                    post_trans.to(device), post_rots.to(device), lidar_data.to(device),
-                                                   lidar_mask.to(device), car_trans.to(device), yaw_pitch_roll.to(device))
+                                                   lidar_mask.to(device), car_trans.to(device), yaw_pitch_roll.to(device), return_gnn_outputs)
             
-            if args.pv_seg:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
+            if return_gnn_outputs:
+                if args.pv_seg:
+                    semantic, distance, vertex, matches, positions, masks, embedding, direction, depth, pv_seg = outputs
+                else:
+                    semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
             else:
-                semantic, distance, vertex, matches, positions, masks, embedding, direction, depth = outputs
+                if args.pv_seg:
+                    distance, vertex, embedding, direction, depth, pv_seg = outputs
+                else:
+                    distance, vertex, embedding, direction, depth = outputs
 
             semantic_gt = semantic_gt.to(device).float()
             instance_gt = instance_gt.to(device)
@@ -190,9 +197,20 @@ def train(args):
             else:
                 depth_loss = 0
             
-            cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
-            if not args.refine:
-                cdist_loss = 0.0
+            if return_gnn_outputs:
+                cdist_loss, match_loss, seg_loss, matches_gt, vector_semantics_gt = graph_loss_fn(matches, positions, semantic, masks, vectors_gt)
+                if not args.refine:
+                    cdist_loss = 0
+            else:
+                cdist_loss = 0
+                match_loss = 0
+                seg_loss = 0
+                matches_gt = None
+                vector_semantics_gt = None
+                matches = None
+                positions = None
+                masks = None
+                semantic = None
             
             # if args.vertex_pred:
             #     # vertex_gt: b, 65, h, w
@@ -215,21 +233,24 @@ def train(args):
                 heatmap = vertex.softmax(1)
                 intersects, union = get_batch_iou(onehot_encoding(heatmap), vertex_gt)
                 iou = intersects / (union + 1e-7)
-                cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
-                total_cdist = float((cdist_p + cdist_l)*0.5)
+                if return_gnn_outputs:
+                    cdist_p, cdist_l = get_batch_cd(positions, vectors_gt, masks, args.xbound, args.ybound)
+                    total_cdist = float((cdist_p + cdist_l)*0.5)
+                else:
+                    total_cdist = 0.0
                 logger.info(f"TRAIN[{epoch_print:>3d}]: [{batchi:>4d}/{last_idx}]    "
                             f"Time: {t1-t0:>7.4f}    "
                             f"Loss: {final_loss.item():>7.4f}    "
                             # f"IOU: {np.array2string(iou[:-1].numpy(), precision=3, floatmode='fixed')}    "
                             f"DT loss: {(dt_loss.item() if args.distance_reg else dt_loss):>7.4f}    "
                             f"Vertex loss: {vt_loss.item():>7.4f}    "
-                            f"Match loss: {match_loss.item():>7.4f}    "
-                            f"Ins Var loss: {var_loss.item() if args.instance_seg else var_loss:>7.4f}    "
-                            f"Ins Dist loss: {dist_loss.item() if args.instance_seg else dist_loss:>7.4f}    "
-                            f"Seg loss: {seg_loss.item():>7.4f}    "
-                            f"PV Seg loss: {pv_seg_loss.item() if args.pv_seg else pv_seg_loss:>7.4f}    "
-                            f"Depth loss: {depth_loss.item() if args.depth_gt else depth_loss:>7.4f}    "
-                            f"CD: {cdist_loss.item() if args.refine else cdist_loss:.4f}")
+                            f"Match loss: {(match_loss.item() if isinstance(match_loss, torch.Tensor) else match_loss):>7.4f}    "
+                            f"Ins Var loss: {(var_loss.item() if args.instance_seg else var_loss):>7.4f}    "
+                            f"Ins Dist loss: {(dist_loss.item() if args.instance_seg else dist_loss):>7.4f}    "
+                            f"Seg loss: {(seg_loss.item() if isinstance(seg_loss, torch.Tensor) else seg_loss):>7.4f}    "
+                            f"PV Seg loss: {(pv_seg_loss.item() if args.pv_seg else pv_seg_loss):>7.4f}    "
+                            f"Depth loss: {(depth_loss.item() if args.depth_gt else depth_loss):>7.4f}    "
+                            f"CD: {(cdist_loss.item() if isinstance(cdist_loss, torch.Tensor) else cdist_loss):.4f}")
 
                 if writer is not None:
                     write_log(writer, torch.mean(iou), total_cdist, 'train', counter)
@@ -247,8 +268,9 @@ def train(args):
                     writer.add_scalar('train/vt_loss', vt_loss, counter)
                     writer.add_scalar('train/match_loss', match_loss, counter)
                     writer.add_scalar('train/cdist_loss', cdist_loss, counter)
-                    for bi, mask in enumerate(masks):
-                        writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
+                    if return_gnn_outputs:
+                        for bi, mask in enumerate(masks):
+                            writer.add_scalar(f'train/num_vector_{bi}', torch.count_nonzero(mask), counter)
                     writer.add_scalar('learning_rate', sched.get_last_lr(), counter)
             
             if args.vis_interval > 0:
@@ -256,12 +278,13 @@ def train(args):
                     if args.distance_reg:
                         distance = distance.relu().clamp(max=args.dist_threshold)
                     heatmap = vertex.softmax(1)
-                    matches = matches.exp()
+                    if return_gnn_outputs:
+                        matches = matches.exp()
                     visualize(writer, 'train', imgs, distance_gt, vertex_gt, vectors_gt, matches_gt, vector_semantics_gt, depth_gt, distance, heatmap, matches, positions, semantic, depth, masks, counter, args)
                 
             counter += 1
 
-        iou, cdist = eval_iou(model, val_loader, args, writer, epoch_print, args.vis_interval, utils.is_main_process())
+        iou, cdist = eval_iou(model, val_loader, args, writer, epoch_print, args.vis_interval, utils.is_main_process(), return_gnn_outputs)
         results_dict = {'iou': torch.mean(iou).to(device), 'cdist': torch.tensor(cdist).to(device)}
         results_dict = utils.reduce_dict(results_dict)
         iou = results_dict['iou']
@@ -284,7 +307,7 @@ def train(args):
         #     model_name = os.path.join(args.logdir, "model_best.pt")
         #     torch.save(model.state_dict(), model_name)
         #     logger.info(f"{model_name} saved")
-        if cdist <= best_cd:
+        if cdist <= best_cd and return_gnn_outputs:
             best_cd = cdist
             if utils.is_main_process():
                 model_name = os.path.join(args.logdir, "model_best.pt")

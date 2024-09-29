@@ -540,6 +540,9 @@ class InstaGraM(nn.Module):
             # distance: feature [b, 256, 100, 200]
             distance_down = F.interpolate(distance, scale_factor=0.25, mode='bilinear', align_corners=True) # [b, 256, 25, 50]
             dt_embedding = sample_feat(vertices_cell, distance_down) # list of [N, 256] tensor
+        
+        # if 2 > 1: # duplicate
+        #     vertices, scores, dt_embedding = list(zip(*[(v.repeat(2,1), s.repeat(2), d.repeat(2,1)) for v, s, d in zip(vertices, scores, dt_embedding)]))
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[

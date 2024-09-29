@@ -82,7 +82,7 @@ class MSEWithReluLoss(torch.nn.Module):
         return loss
 
 class GraphLoss(nn.Module):
-    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, num_classes=3, reduction='mean', cost_class:float=4.0, cost_dist:float=50.0) -> None:
+    def __init__(self, xbound: list, ybound: list, cdist_threshold: float=1.5, num_classes=3, reduction='mean', cost_class:float=4.0, cost_dist:float=50.0, duplicates:int=1) -> None:
         super(GraphLoss, self).__init__()
         
         # patch_size: [30.0, 60.0] list
@@ -94,9 +94,10 @@ class GraphLoss(nn.Module):
 
         self.cost_class = cost_class
         self.cost_dist = cost_dist
+        self.duplicates = duplicates
 
         self.match_loss = torch.nn.NLLLoss()
-        self.cls_loss = torch.nn.NLLLoss() # FocalLoss()
+        self.cls_loss = torch.nn.NLLLoss() # FocalLoss() torch.nn.NLLLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
         # matches: [b, N+1, N+1]
