@@ -543,7 +543,7 @@ class InstaGraM(nn.Module):
 
         if self.max_vertices >= 0:
             vertices, scores, dt_embedding, masks = list(zip(*[
-                top_k_vertices(v, s, d, self.max_vertices)
+                top_k_vertices_with_duplicates(v, s, d, self.max_vertices, 2)
                 for v, s, d in zip(vertices, scores, dt_embedding)
             ]))
 

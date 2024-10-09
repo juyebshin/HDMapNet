@@ -99,10 +99,10 @@ class GraphLoss(nn.Module):
         self.cls_loss = torch.nn.NLLLoss() # FocalLoss()
 
     def forward(self, matches: torch.Tensor, positions: torch.Tensor, semantics: torch.Tensor, masks: torch.Tensor, vectors_gt: list):
-        # matches: [b, N+1, N+1]
-        # positions: [b, N, 2], x y
-        # semantics: [b, 3, N] log_softmax dim=1
-        # masks: [b, N, 1]
+        # matches: [b, 2N+1, 2N+1]
+        # positions: [b, 2N, 2], x y
+        # semantics: [b, 3, 2N] log_softmax dim=1
+        # masks: [b, 2N, 1]
         # vectors_gt: [b] list of [instance] list of dict
         # matches = matches.exp()
 
@@ -144,14 +144,15 @@ class GraphLoss(nn.Module):
             if len(position_gt) > 0 and len(position_valid) > 0:
                 # compute chamfer distance # [N, P] shaped tensor
                 cdist = torch.cdist(position_valid, position_gt) # [M, P]
-                # cost_class = -semantic_valid.permute(1, 0).contiguous()[:, pts_type_list] # [M, P]
-                # cost = self.cost_class * cost_class + self.cost_dist * cdist # [M, P]
-                nearest_dist, nearest = cdist.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
-                # assigned_gt_inds = position.new_full((cdist.size(0),), -1, dtype=torch.long) # [M, ]
-                # matched_pred_inds, matched_gt_inds = linear_sum_assignment(cdist.detach().cpu().numpy())
+                cost_class = -semantic_valid.permute(1, 0).contiguous()[:, pts_type_list] # [M, P]
+                cost = self.cost_class * cost_class + self.cost_dist * cdist # [M, P]
+                nearest_dist, nearest = cost.min(-1) # [M, ] distances and indices of nearest position_gt -> nearest_ins = [pts_ins_list[n] for n in nearest]
+                assigned_gt_inds = position.new_full((cdist.size(0),), -1, dtype=torch.long) # [M, ]
+                assigned_labels = position.new_full((cdist.size(0),), -1, dtype=torch.long) # [M, ]
+                matched_pred_inds, matched_gt_inds = linear_sum_assignment(cdist.detach().cpu().numpy())
                 # matched_pred_inds = torch.from_numpy(matched_pred_inds).to(position.device)
                 # matched_gt_inds = torch.from_numpy(matched_gt_inds).to(position.device)
-                # assigned_gt_inds[matched_pred_inds] = matched_gt_inds # [M, ]
+                assigned_gt_inds[matched_pred_inds] = matched_gt_inds # [M, ]
 
                 if len(nearest) > 1: # at least two vertices matched_gt_inds
                     nearest_ins = [] # length (M)
